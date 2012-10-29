@@ -15,6 +15,7 @@
 
 import logging
 import struct
+import os
 
 from ryu.base import app_manager
 from ryu.controller import mac_to_port
@@ -24,6 +25,7 @@ from ryu.controller.handler import set_ev_cls
 from ryu.ofproto import nx_match
 from ryu.lib.mac import haddr_to_str
 from ryu.lib import mac
+from ryu.demo import demo_app
 
 LOG = logging.getLogger('ryu.app.simple_switch')
 
@@ -43,13 +45,35 @@ class SimpleSwitch(app_manager.RyuApp):
     def __init__(self, *args, **kwargs):
         super(SimpleSwitch, self).__init__(*args, **kwargs)
         self.mac2port = kwargs['mac2port']
+        self._demo_app = None
+        self._last_demo_change = 0
 
     def _drop_packet(self, msg):
         datapath = msg.datapath
         datapath.send_packet_out(msg.buffer_id, msg.in_port, [])
 
+    def _is_demo_app_changed(self):
+        stat = os.stat(demo_app.__file__)
+        if self._last_demo_change < stat.st_mtime:
+            self._last_demo_change = stat.st_mtime
+            return True
+
+        return False
+
+    def demo_app(self):
+        reload(demo_app)
+        if not self._demo_app or self._is_demo_app_changed():
+          print "\n***\nReloading application\n***\n"
+          appObjs = {'mac2port': self.mac2port}
+          self._demo_app = demo_app.DemoApp(appObjs)
+
+        return self._demo_app
+
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):
+        self.demo_app().handle_packet_in(ev)
+
+        '''
         msg = ev.msg
         datapath = msg.datapath
         ofproto = datapath.ofproto
@@ -91,6 +115,7 @@ class SimpleSwitch(app_manager.RyuApp):
             flags=ofproto.OFPFF_SEND_FLOW_REM, actions=actions)
 
         datapath.send_packet_out(msg.buffer_id, msg.in_port, actions)
+        '''
 
     @set_ev_cls(ofp_event.EventOFPPortStatus, MAIN_DISPATCHER)
     def port_status_handler(self, ev):
