@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import json
+import httplib
 from webob import Request, Response
 
 from ryu.base import app_manager
@@ -27,7 +28,9 @@ from ryu.exception import PortNotFound, PortAlreadyExist, PortUnknown
 from ryu.app.wsgi import ControllerBase, WSGIApplication
 from ryu.exception import MacAddressDuplicated
 from ryu.lib.mac import is_multicast, haddr_to_str
+from ryu.lib import mac
 from ryu.app.rest_nw_id import NW_ID_EXTERNAL
+from ryu.ofproto import ofproto_v1_0 as ofproto
 
 ## TODO:XXX
 ## define db interface and store those information into db
@@ -361,6 +364,72 @@ class FlowVisorController(ControllerBase):
 
         return Response(status=status, content_type='application/json', body=body)
 
+class SimpleSwitch(ControllerBase):
+    def __init__(self, req, link, data, **config):
+        super(SimpleSwitch, self).__init__(req, link, data, **config)
+        self.mac_to_port = data.get('mac2port')
+        assert self.mac_to_port is not None
+
+        # For http requests
+        address = 0# do later
+        self.host = '10.10.10.81'
+        self.port = 8090
+        self.url_prefix = '/v1.0'
+
+        #self.output_url = '/%(dpid)s/output/%(buffer_id)s_%(in_port)s_%(out_port)s'
+        #self.addFlow_url = '/%(dpid)s/flowmod/%(in_port)s_%(dst)s_%(out_port)s'
+        #self.drop_url = '/%(dpid)s/drop/%(buffer_id)s_%(in_port)s'
+        self.output_url = '/%s/output/%s_%s_%s'
+        self.addFlow_url = '/%s/flowmod/%s_%s_%s'
+        self.drop_url = '/%s/drop/%s_%s'
+
+    def controllerAction(self, action, method):
+        conn = httplib.HTTPConnection(self.host, self.port)
+
+        url = self.url_prefix + '/packetAction' + action
+        print "SENDING BACK DOWN TO CONTROLLER: %s" % url
+        conn.request(method, url)
+        res = conn.getresponse()
+        if res.status in (httplib.OK,
+                          httplib.CREATED,
+                          httplib.ACCEPTED,
+                          httplib.NO_CONTENT):
+            return res
+
+        raise httplib.HTTPException(
+            res, 'code %d reason %s' % (res.status, res.reason),
+            res.getheaders(), res.read())
+
+    def packet_in(self, req, dpid, buffer_id, src, dst, in_port):
+        print "PACKET HANDLER FUNCTION"
+        self.mac_to_port.dpid_add(dpid)
+
+        # learn a mac address to avoid FLOOD next time.
+        #self.mac_to_port[dpid][src] = in_port
+        self.mac_to_port.port_add(dpid, in_port, src)
+        broadcast = (dst == mac.BROADCAST) or mac.is_multicast(dst)
+
+        if broadcast:
+            out_port = ofproto.OFPP_FLOOD
+        elif src != dst:
+            #if dst in self.mac_to_port[dpid]:
+                #out_port = self.mac_to_port[dpid][dst]
+            out_port = self.mac_to_port.port_get(dpid, dst)
+            if not out_port:
+                out_port = ofproto.OFPP_FLOOD
+        else:
+            #self._drop_packet(msg)
+            self.controllerAction(self.drop_url % (dpid, buffer_id, in_port), 'DELETE')
+            return
+
+        # install a flow to avoid packet_in next time
+        if broadcast or (out_port != ofproto.OFPP_FLOOD):
+            #self.add_flow(datapath, msg.in_port, dst, actions)
+            self.controllerAction(self.addFlow_url % (dpid, in_port, dst, out_port), 'PUT')
+
+        # Output packet
+        self.controllerAction(self.output_url % (dpid, buffer_id, in_port, out_port), 'PUT')
+
 
 class restapi(app_manager.RyuApp):
     _CONTEXTS = {
@@ -368,7 +437,7 @@ class restapi(app_manager.RyuApp):
         'wsgi': WSGIApplication,
         'fv_cli': flowvisor_cli.FlowVisor_CLI,
         'dpset': dpset.DPSet,
-        'mac2port': mac_to_port.MacToPortTable
+        'mac2port': mac_to_port.MacToPortTable,
         }
 
     def __init__(self, *args, **kwargs):
@@ -474,3 +543,9 @@ class restapi(app_manager.RyuApp):
                        controller=FlowVisorController, action='unassignNetwork',
                        conditions=dict(method=['PUT']))
 
+        # APIs for the application
+        wsgi.registory['SimpleSwitch'] = {'mac2port' : self.mac2port}
+        uri = '/v1.0/app'
+        mapper.connect('application', uri + '/packet_in/{dpid}/{buffer_id}/{src}_{dst}_{in_port}',
+                       controller=SimpleSwitch, action='packet_in',
+                       conditions=dict(method=['PUT']))
