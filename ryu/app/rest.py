@@ -26,7 +26,7 @@ from ryu.exception import NetworkNotFound, NetworkAlreadyExist
 from ryu.exception import PortNotFound, PortAlreadyExist, PortUnknown
 from ryu.app.wsgi import ControllerBase, WSGIApplication
 from ryu.exception import MacAddressDuplicated
-from ryu.lib.mac import is_multicast, haddr_to_str
+from ryu.lib.mac import is_multicast, haddr_to_str, haddr_to_bin
 from ryu.app.rest_nw_id import NW_ID_EXTERNAL
 
 ## TODO:XXX
@@ -361,6 +361,69 @@ class FlowVisorController(ControllerBase):
 
         return Response(status=status, content_type='application/json', body=body)
 
+class PacketController(ControllerBase):
+    def __init__(self, req, link, data, **config):
+        super(PacketController, self).__init__(req, link, data, **config)
+        self.dpset = data.get('dpset')
+        assert self.dpset is not None
+
+    def add_flow(self, req, dpid, in_port, dst, out_port):
+        print "ADD FLOW FUNCTION"
+        dpid = int(dpid)
+        in_port = int(in_port)
+        out_port = int(out_port)
+        dst = haddr_to_bin(dst)
+
+        datapath = self.dpset.get(dpid)
+        assert datapath is not None
+        ofproto = datapath.ofproto
+
+
+        wildcards = ofproto.OFPFW_ALL
+        wildcards &= ~ofproto.OFPFW_IN_PORT
+        wildcards &= ~ofproto.OFPFW_DL_DST
+
+        match = datapath.ofproto_parser.OFPMatch(
+            wildcards, in_port, 0, dst,
+            0, 0, 0, 0, 0, 0, 0, 0, 0)
+
+        actions = [datapath.ofproto_parser.OFPActionOutput(out_port)]
+
+        mod = datapath.ofproto_parser.OFPFlowMod(
+            datapath=datapath, match=match, cookie=0,
+            command=ofproto.OFPFC_ADD, idle_timeout=0, hard_timeout=0,
+            priority=ofproto.OFP_DEFAULT_PRIORITY,
+            flags=ofproto.OFPFF_SEND_FLOW_REM, actions=actions)
+        datapath.send_msg(mod)
+
+    def output_packet(self, req, dpid, buffer_id, in_port, out_port):
+        print "OUTPUT PACKET FUNCTION"
+        dpid = int(dpid)
+        buffer_id = int(buffer_id)
+        in_port = int(in_port)
+        out_port = int(out_port)
+
+        datapath = self.dpset.get(dpid)
+        assert datapath is not None
+        ofproto = datapath.ofproto
+
+        actions = [datapath.ofproto_parser.OFPActionOutput(out_port)]
+
+        out = datapath.ofproto_parser.OFPPacketOut(
+            datapath=datapath, buffer_id=buffer_id, in_port=in_port,
+            actions=actions)
+        datapath.send_msg(out)
+
+    def drop_packet(self, req, dpid, buffer_id, in_port):
+        print "DROP PACKET FUNCTION"
+        dpid = int(dpid)
+        buffer_id = int(buffer_id)
+        in_port = int(in_port)
+
+        datapath = self.dpset.get(dpid)
+        assert datapath is not None
+
+        datapath.send_packet_out(buffier_id, in_port, [])
 
 class restapi(app_manager.RyuApp):
     _CONTEXTS = {
@@ -474,3 +537,17 @@ class restapi(app_manager.RyuApp):
                        controller=FlowVisorController, action='unassignNetwork',
                        conditions=dict(method=['PUT']))
 
+        # For Janus -> Network APIs
+        wsgi.registory['PacketController'] = {'dpset' : self.dpset}
+        uri = '/v1.0/packetAction'
+        mapper.connect('pktCtl', uri + '/{dpid}/output/{buffer_id}_{in_port}_{out_port}',
+                       controller=PacketController, action='output_packet',
+                       conditions=dict(method=['PUT']))
+
+        mapper.connect('pktCtl', uri + '/{dpid}/flowmod/{in_port}_{dst}_{out_port}',
+                       controller=PacketController, action='add_flow',
+                       conditions=dict(method=['PUT']))
+
+        mapper.connect('pktCtl', uri + '/{dpid}/drop/{buffer_id}_{in_port}',
+                       controller=PacketController, action='drop_packet',
+                       conditions=dict(method=['DELETE']))

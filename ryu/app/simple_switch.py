@@ -15,6 +15,7 @@
 
 import logging
 import struct
+import httplib
 
 from ryu.base import app_manager
 from ryu.controller import mac_to_port
@@ -42,6 +43,12 @@ class SimpleSwitch(app_manager.RyuApp):
         super(SimpleSwitch, self).__init__(*args, **kwargs)
         self.mac_to_port = {}
 
+        # For http requests
+        self.host = '10.10.10.85'
+        self.port = 8090
+        self.url_prefix = '/v1.0'
+
+    """
     def add_flow(self, datapath, in_port, dst, actions):
         ofproto = datapath.ofproto
 
@@ -60,6 +67,7 @@ class SimpleSwitch(app_manager.RyuApp):
             flags=ofproto.OFPFF_SEND_FLOW_REM, actions=actions)
         datapath.send_msg(mod)
 
+    
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):
         msg = ev.msg
@@ -101,6 +109,7 @@ class SimpleSwitch(app_manager.RyuApp):
             datapath=datapath, buffer_id=msg.buffer_id, in_port=msg.in_port,
             actions=actions)
         datapath.send_msg(out)
+    """
 
     @set_ev_cls(ofp_event.EventOFPPortStatus, MAIN_DISPATCHER)
     def _port_status_handler(self, ev):
@@ -121,3 +130,36 @@ class SimpleSwitch(app_manager.RyuApp):
     @set_ev_cls(ofp_event.EventOFPBarrierReply, MAIN_DISPATCHER)
     def barrier_replay_handler(self, ev):
         pass
+
+    @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
+    def _packet_in_handler(self, ev):
+        print "My packet in handler"
+        msg = ev.msg
+        datapath = msg.datapath
+        ofproto = datapath.ofproto
+
+        dst, src, _eth_type = struct.unpack_from('!6s6sH', buffer(msg.data), 0)
+        in_port = msg.in_port
+
+        #packet_in_url = '/app/packet_in/%(dpid)s/%(buffer_id)s/%(src)s_%(dst)s_%(in_port)s'
+        packet_in_url = '/app/packet_in/%s/%s/%s_%s_%s'
+        method = 'PUT'
+
+        conn = httplib.HTTPConnection(self.host, self.port)
+        url = self.url_prefix + (packet_in_url % (datapath.id, msg.buffer_id, haddr_to_str(src), haddr_to_str(dst), in_port))
+        conn.request(method, url)
+        print "SENDING UP TO APPLICATION"
+        res = conn.getresponse()
+        print "\n\n\n"
+        if res.status in (httplib.OK,
+                          httplib.CREATED,
+                          httplib.ACCEPTED,
+                          httplib.NO_CONTENT):
+            return res
+
+        raise httplib.HTTPException(
+            res, 'code %d reason %s' % (res.status, res.reason),
+            res.getheaders(), res.read())
+
+
+
