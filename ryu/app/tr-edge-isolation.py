@@ -267,9 +267,6 @@ class SimpleIsolation(app_manager.RyuApp):
         ofproto = datapath.ofproto
 
         dst, src, _eth_type = struct.unpack_from('!6s6sH', buffer(msg.data), 0)
-        if haddr_to_str(dst) == "01:80:c2:00:00:00":
-            self._drop_packet(msg)
-            return
         LOG.info("packet in from port %s of dpid %s", msg.in_port, hex(datapath.id))
         LOG.info("src mac %s, dst mac %s", haddr_to_str(src), haddr_to_str(dst))
 
