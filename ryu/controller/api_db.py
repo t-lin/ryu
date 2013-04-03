@@ -204,6 +204,7 @@ class API_DB(object):
             if entry.network_id == network_id or network_id == NW_ID_EXTERNAL:
                 # If old network and new network the same, do nothing
                 # Or if trying to change an existing net association to NW_ID_EXTERNAL, do nothing
+                self.db.rollback()
                 return
             elif entry.network_id == NW_ID_EXTERNAL:
                 # Allow changing from NW_ID_EXTERNAL to a known network UUID

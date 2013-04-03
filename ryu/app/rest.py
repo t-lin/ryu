@@ -93,7 +93,7 @@ class NetworkController(ControllerBase):
             self.nw.create_network(network_id)
             self.api_db.createNetwork(network_id)
         except NetworkAlreadyExist:
-            return Response(status=409)
+            return Response(status=200)
         else:
             return Response(status=200)
 
@@ -122,7 +122,7 @@ class NetworkController(ControllerBase):
             self.mac2net.add_mac(charMAC, network_id, NW_ID_EXTERNAL)
             self.api_db.addMAC(network_id, mac)
         except MacAddressDuplicated:
-            return Response(status=409)
+            return Response(status=200)
         else:
             return Response(status=200)
 
@@ -130,7 +130,7 @@ class NetworkController(ControllerBase):
         try:
             self.nw.add_iface(network_id, iface_id)
         except MacAddressDuplicated:
-            return Response(status=409)
+            return Response(status=200)
         else:
             return Response(status=200)
 
@@ -144,7 +144,7 @@ class NetworkController(ControllerBase):
             self.mac2net.del_mac(charMAC)
             self.api_db.delMAC(mac)
         except MacAddressNotFound:
-            return Response(status=404)
+            return Response(status=200)
         else:
             return Response(status=200)
 
@@ -198,7 +198,7 @@ class PortController(ControllerBase):
         except NetworkNotFound:
             return Response(status=404)
         except PortAlreadyExist:
-            return Response(status=409)
+            return Response(status=200)
 
         return Response(status=200)
 

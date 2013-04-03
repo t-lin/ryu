@@ -98,7 +98,7 @@ class SimpleIsolation(app_manager.RyuApp):
         rule.set_dl_src(src)
         datapath.send_flow_mod(
             rule=rule, cookie=0, command=datapath.ofproto.OFPFC_ADD,
-            idle_timeout=90, hard_timeout=90,
+            idle_timeout=90, hard_timeout=2000,
             priority=ofproto.OFP_DEFAULT_PRIORITY,
             buffer_id=0xffffffff, out_port=ofproto.OFPP_NONE,
             flags=ofproto.OFPFF_SEND_FLOW_REM, actions=actions)
@@ -160,7 +160,7 @@ class SimpleIsolation(app_manager.RyuApp):
         # Install unicast flows and retrieve resulting actions list
         actions = self._install_unicast_flow(msg, src, dst, out_port)
         if actions:
-            LOG.debug("learned dpid %s in_port %d out_port %d src %s dst %s",
+            LOG.info("learned dpid %s in_port %d out_port %d src %s dst %s",
                       datapath.id, msg.in_port, actions[0].port,
                       haddr_to_str(src), haddr_to_str(dst))
 
@@ -267,6 +267,9 @@ class SimpleIsolation(app_manager.RyuApp):
         ofproto = datapath.ofproto
 
         dst, src, _eth_type = struct.unpack_from('!6s6sH', buffer(msg.data), 0)
+        if haddr_to_str(dst) == "01:80:c2:00:00:00":
+            self._drop_packet(msg)
+            return
         LOG.info("packet in from port %s of dpid %s", msg.in_port, hex(datapath.id))
         LOG.info("src mac %s, dst mac %s", haddr_to_str(src), haddr_to_str(dst))
 
