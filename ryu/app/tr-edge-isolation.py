@@ -592,6 +592,10 @@ class SimpleIsolation(app_manager.RyuApp):
                 else:
                     self._install_modflow(msg, src, dst, actions)
         else:
+            if out_port == in_port:
+                # Don't send packet back out of input port
+                return
+
             # Check if output port is allowed (if source is PXE_CTRL network, don't care)
             if src_nw_id == NW_ID_PXE_CTRL or src_nw_id != dst_nw_id:
                 # Install unicast flows and retrieve resulting actions list
@@ -625,6 +629,10 @@ class SimpleIsolation(app_manager.RyuApp):
                 # Simply flooding; Don't bother with mod flow
                 datapath.send_packet_out(msg.buffer_id, msg.in_port, actions)
         else:
+            if out_port == msg.in_port:
+                # Don't send packet back out of input port
+                return
+
             # Check if output port is allowed (if source is MGMT_CTRL network, don't care)
             if src_nw_id == NW_ID_MGMT_CTRL or src_nw_id != dst_nw_id:
                 actions.append(datapath.ofproto_parser.OFPActionOutput(out_port))

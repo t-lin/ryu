@@ -24,7 +24,7 @@ from ryu.exception import PortAlreadyExist, PortNotFound
 from ryu.exception import MacAddressDuplicated, MacAddressNotFound
 from ryu.exception import BondPortAlreadyBonded, BondAlreadyExist, BondPortNotFound, BondNotFound
 from ryu.exception import FlowSpaceIDAlreadyExist, NetworkAlreadyAssigned
-from ryu.app.rest_nw_id import NW_ID_EXTERNAL
+from ryu.app.rest_nw_id import NW_ID_EXTERNAL, NW_ID_MGMT_CTRL, NW_ID_PXE_CTRL
 from sqlalchemy.ext.sqlsoup import SqlSoup
 from sqlalchemy import create_engine, MetaData
 from sqlalchemy import Table, Column, Integer, String
@@ -201,9 +201,11 @@ class API_DB(object):
         if not entry:
             self.db_macs.insert(network_id=network_id, mac_address=mac)
         else:
-            if entry.network_id == network_id or network_id == NW_ID_EXTERNAL:
+            if entry.network_id == network_id or network_id == NW_ID_EXTERNAL or \
+                network_id == NW_ID_MGMT_CTRL or network_id == NW_ID_PXE_CTRL:
                 # If old network and new network the same, do nothing
                 # Or if trying to change an existing net association to NW_ID_EXTERNAL, do nothing
+                # Or if trying to assign controller status to an already registered port, do nothing
                 self.db.rollback()
                 return
             elif entry.network_id == NW_ID_EXTERNAL:
