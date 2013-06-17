@@ -561,9 +561,6 @@ class SimpleIsolation(app_manager.RyuApp):
         # Isolate between controller and each BM servers
         in_port = msg.in_port
         in_bond_id = self.port_bond.get_bond_id(datapath.id, msg.in_port)
-        out_bond_id = self.port_bond.get_bond_id(datapath.id, out_port)
-        if in_bond_id:
-            in_bond_ports = self.port_bond.ports_in_bond(in_bond_id)
 
         actions = []
         if broadcast or out_port is None:
@@ -572,8 +569,19 @@ class SimpleIsolation(app_manager.RyuApp):
             if src_nw_id == NW_ID_PXE_CTRL:
                 out_port_list.extend(self._get_all_out_ports(datapath.id, in_port, NW_ID_PXE))
 
-            for port in out_port_list:
-                actions.append(datapath.ofproto_parser.OFPActionOutput(port))
+            for port_no in out_port_list:
+                actions.append(datapath.ofproto_parser.OFPActionOutput(port_no))
+
+                # Prevent potential loopbacks if downstream ports not bonded in switch
+                out_bond_id = self.port_bond.get_bond_id(datapath.id, port_no)
+                if out_bond_id:
+                    # Install a drop rule for each port in bond
+                    for port in self.port_bond.ports_in_bond(out_bond_id):
+                        msg.in_port = port
+                        self._install_modflow(msg, src, None, [])
+
+                    # Replace msg.in_port with original
+                    msg.in_port = in_port
 
             if broadcast:
                 # If broadcasting, write mod flow into switch
