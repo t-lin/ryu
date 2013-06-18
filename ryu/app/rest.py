@@ -189,11 +189,16 @@ class PortController(ControllerBase):
         try:
             datapath_id = int(dpid, 16)
             port = int(port_id)
-            if not self.nw.same_network(datapath_id, NW_ID_EXTERNAL, port):
-                self.nw.create_port(network_id, datapath_id, port)
-                self.api_db.createPort(network_id, dpid, port_id)
+
+            if port > 0:
+                if not self.nw.same_network(datapath_id, NW_ID_EXTERNAL, port):
+                    self.nw.create_port(network_id, datapath_id, port)
+                    self.api_db.createPort(network_id, dpid, port_id)
+                else:
+                    # If a port has been registered as external, leave it be
+                    pass
             else:
-                # If a port has been registered as external, leave it be
+                # Don't raise exception or else q-agt may crash and stop
                 pass
         except NetworkNotFound:
             return Response(status=404)

@@ -85,8 +85,8 @@ class Network(object):
             if ((dpid, port) in self.networks[network_id] or
                     _known_nw_id(old_network_id)):
                 if not port_may_exist:
-                    raise PortAlreadyExist(network_id=network_id,
-                                           dpid=dpid, port=port)
+                    # Allow re-registration to different network
+                    pass
 
             if old_network_id != network_id:
                 self.networks[network_id].add((dpid, port))

@@ -245,12 +245,8 @@ class API_DB(object):
             self.db_ports.insert(network_id=network_id,
                                     datapath_id=dpid, port_num=port_num)
         else:
-            if update:
-                old_entry.network_id = network_id
-            else:
-                # Entry already exists for (dpid,port) <=> network
-                raise PortAlreadyExist(network_id=network_id,
-                                        dpid=dpid, port=port_num)
+            # Allow port creation over an existing entry to override network ID
+            old_entry.network_id = network_id
 
         self.db.commit()
 
