@@ -18,6 +18,7 @@ import logging
 
 from ryu.exception import MacAddressDuplicated, MacAddressNotFound
 from ryu.lib.mac import haddr_to_str
+from ryu.app.rest_nw_id import NW_ID_MGMT_CTRL, NW_ID_PXE_CTRL
 
 LOG = logging.getLogger('ryu.controller.mac_to_network')
 
@@ -43,7 +44,7 @@ class MacToNetwork(object):
                       haddr_to_str(mac), _nw_id, nw_id)
             return
 
-        if nw_id == nw_id_external:
+        if nw_id == nw_id_external or nw_id == NW_ID_MGMT_CTRL or nw_id == NW_ID_PXE_CTRL:
             # this can happens when the packet traverses
             # VM-> tap-> ovs-> ext-port-> wire-> ext-port-> ovs-> tap-> VM
             return
