@@ -21,7 +21,7 @@ import logging
 import struct
 
 from ryu.app.rest_nw_id import NW_ID_UNKNOWN, NW_ID_EXTERNAL
-from ryu.app.rest_nw_id import NW_ID_PXE_CTRL, NW_ID_PXE, NW_ID_MGMT_CTRL, NW_ID_MGMT
+from ryu.app.rest_nw_id import NW_ID_PXE_CTRL, NW_ID_PXE, NW_ID_MGMT_CTRL, NW_ID_MGMT, NW_ID_ORION
 from ryu.base import app_manager
 from ryu.exception import MacAddressDuplicated, MacAddressNotFound
 from ryu.exception import PortUnknown
@@ -376,6 +376,9 @@ class SimpleIsolation(app_manager.RyuApp):
         elif src_nw_id == NW_ID_MGMT or src_nw_id == NW_ID_MGMT_CTRL:
             self.pktHandling_MGMT(msg, datapath, ofproto, dst, src, broadcast,
                                     port_nw_id, src_nw_id, dst_nw_id, out_port)
+        elif port_nw_id == NW_ID_ORION:
+            self.pktHandling_ORION(msg, datapath, ofproto, dst, src, broadcast,
+                                    port_nw_id, src_nw_id, dst_nw_id, out_port)
         else:
             self.pktHandling_BaseCase(msg, datapath, ofproto, dst, src, broadcast,
                                         port_nw_id, src_nw_id, dst_nw_id, out_port)
@@ -594,6 +597,7 @@ class SimpleIsolation(app_manager.RyuApp):
         else:
             if out_port == in_port:
                 # Don't send packet back out of input port
+                self._drop_packet(msg)
                 return
 
             # Check if output port is allowed (if source is PXE_CTRL network, don't care)
@@ -631,6 +635,7 @@ class SimpleIsolation(app_manager.RyuApp):
         else:
             if out_port == msg.in_port:
                 # Don't send packet back out of input port
+                self._drop_packet(msg)
                 return
 
             # Check if output port is allowed (if source is MGMT_CTRL network, don't care)
@@ -640,5 +645,33 @@ class SimpleIsolation(app_manager.RyuApp):
             # Installs rule to drop if actions list is empty
             self._install_modflow(msg, src, dst, actions)
             datapath.send_packet_out(msg.buffer_id, msg.in_port, actions)
+
+    def pktHandling_ORION(self, msg, datapath, ofproto, dst, src, broadcast,
+                                 port_nw_id, src_nw_id, dst_nw_id, out_port):
+        actions = []
+        if broadcast or out_port is None:
+            out_port_list = []
+            out_port_list.extend(self.nw.filter_ports(datapath.id,
+                                        msg.in_port, NW_ID_ORION))
+
+            for port in out_port_list:
+                actions.append(datapath.ofproto_parser.OFPActionOutput(port))
+
+            if broadcast:
+                # If broadcasting, write mod flow into switch
+                self._install_modflow(msg, src, dst, actions)
+            else:
+                # Simply flooding; Don't bother with mod flow
+                pass
+        else:
+            if out_port == msg.in_port:
+                # Don't send packet back out of input port
+                self._drop_packet(msg)
+                return
+
+            # Install unicast flows and retrieve resulting actions list
+            actions = self._install_unicast_flow(msg, src, dst, out_port)
+
+        datapath.send_packet_out(msg.buffer_id, msg.in_port, actions)
 
 

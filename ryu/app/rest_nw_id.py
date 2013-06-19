@@ -21,6 +21,7 @@ NW_ID_PXE_CTRL = '__NW_ID_PXE_CTRL__' # PXE network controllers
 NW_ID_PXE = '__NW_ID_PXE__' # PXE network clients
 NW_ID_MGMT_CTRL = '__NW_ID_MGMT_CTRL__' # Management network controllers
 NW_ID_MGMT = '__NW_ID_MGMT__' # Management network clients
+NW_ID_ORION = '__ORION__' # ORION connection
 
 # PORT_TYPE_VM = 'guestvm'
 # PORT_TYPE_GW = 'gateway'
