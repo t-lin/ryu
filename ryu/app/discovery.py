@@ -184,7 +184,11 @@ class LLDPPacket(object):
                 eth.type == lldp.ETH_TYPE_LLDP):
             raise LLDPPacket.LLDPUnknownFormat(
                 msg='unknown dst mac(%s) or type(%s)' % (eth.dst, eth.type))
-        lldp_data = eth.lldp
+        try:
+            lldp_data = eth.lldp
+        except:
+            LOG.debug('Invalid LLDP message')
+            raise LLDPPacket.LLDPUnknownFormat(msg='Invalid LLDP message')
 
         chassis_id = lldp_data.tlvs[0]
         if chassis_id.subtype != ChassisID.SUB_LOCALLY_ASSIGNED:
