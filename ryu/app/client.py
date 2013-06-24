@@ -80,7 +80,7 @@ class OFPClientV1_0(RyuClientBase):
         self._do_request('POST', self.path_port % (network_id, dpid, port))
 
     def ip_mac_mapping(self, network_id, dpid, mac, ip, port):
-	self._do_request('PUT', self.ip_mac_mapping_path % (network_id, mac, ip, dpid, port))
+	    self._do_request('PUT', self.ip_mac_mapping_path % (network_id, mac, ip, dpid, port))
 
     def update_port(self, network_id, dpid, port):
         self._do_request('PUT', self.path_port % (network_id, dpid, port))
