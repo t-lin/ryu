@@ -177,12 +177,15 @@ class LLDPPacket(object):
     class LLDPUnknownFormat(ryu_exc.RyuException):
         message = '%(msg)s'
 
+    class NotLLDP(ryu_exc.RyuException):
+        message = '%(msg)s'
+
     @staticmethod
     def lldp_parse(data):
         eth = Ethernet(data)
         if not (eth.dst == lldp.LLDP_MAC_NEAREST_BRIDGE and
                 eth.type == lldp.ETH_TYPE_LLDP):
-            raise LLDPPacket.LLDPUnknownFormat(
+            raise LLDPPacket.NotLLDP(
                 msg='unknown dst mac(%s) or type(%s)' % (eth.dst, eth.type))
         try:
             lldp_data = eth.lldp
@@ -337,9 +340,14 @@ class Discovery(app_manager.RyuApp):
             src_dpid, src_port_no = LLDPPacket.lldp_parse(msg.data)
         except dpkt.UnpackError as e:
             LOG.debug('error in unpack packet %s', e)
-        except LLDPPacket.LLDPUnknownFormat as e:
+        except LLDPPacket.NotLLDP as e:
             # This handler can receive all the packtes which can be
             # not-LLDP packet. Ignore it silently
+            return
+        except LLDPPacket.LLDPUnknownFormat as e:
+            # There is some error with the LLDP packet's formatting
+            # Drop the packet
+            self._drop_packet(msg)
             return
         else:
             if not self.link_set.update_link(src_dpid, src_port_no,
