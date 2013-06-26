@@ -28,6 +28,7 @@ from ryu.controller.handler import MAIN_DISPATCHER, CONFIG_DISPATCHER
 from ryu.controller.handler import set_ev_cls
 from ryu.ofproto import ofproto_v1_0
 from ryu.lib.mac import haddr_to_str, ipaddr_to_str
+from ryu.lib.lldp import ETH_TYPE_LLDP
 from janus.network.of_controller.janus_of_consts import JANEVENTS, JANPORTREASONS
 from janus.network.of_controller.event_contents import EventContents
 
@@ -111,6 +112,10 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
         contents.set_buff_id(msg.buffer_id)
 
         dl_dst, dl_src, _eth_type = struct.unpack_from('!6s6sH', buffer(msg.data), 0)
+        if _eth_type == ETH_TYPE_LLDP:
+            # Don't forward LLDP packets to Janus
+            return
+
         contents.set_in_port(msg.in_port)
         contents.set_dl_dst(haddr_to_str(dl_dst))
         contents.set_dl_src(haddr_to_str(dl_src))
