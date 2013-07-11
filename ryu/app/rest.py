@@ -288,7 +288,6 @@ class PortController(ControllerBase):
                     old_network_id = self.nw.get_network(datapath_id, port)
                 except PortUnknown:
                     old_network_id = None
-
                 # Updating an existing port whose network has changed
                 if self.fv_cli.getSliceName(old_network_id) or (old_network_id == NW_ID_EXTERNAL):
                     flowspace_ids = self.fv_cli.getFlowSpaceIDs(datapath_id, port)
