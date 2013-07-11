@@ -19,6 +19,7 @@
 
 import json
 import sys
+import logging
 from webob import Request, Response
 
 from ryu.base import app_manager
@@ -36,6 +37,8 @@ from ryu.app.wsgi import ControllerBase, WSGIApplication
 from ryu.exception import MacAddressDuplicated, MacAddressNotFound
 from ryu.lib.mac import is_multicast, haddr_to_str, haddr_to_bin
 from ryu.app.rest_nw_id import NW_ID_EXTERNAL
+
+LOG = logging.getLogger('ryu.app.rest')
 
 ## TODO:XXX
 ## define db interface and store those information into db
@@ -93,9 +96,10 @@ class NetworkController(ControllerBase):
             self.nw.create_network(network_id)
             self.api_db.createNetwork(network_id)
         except NetworkAlreadyExist:
-            return Response(status=200)
-        else:
-            return Response(status=200)
+            # Treat API as idempotent reglardess of HTTP method used
+            pass
+
+        return Response(status=200)
 
     def update(self, req, network_id, **_kwargs):
         self.nw.update_network(network_id)
@@ -115,14 +119,25 @@ class NetworkController(ControllerBase):
         return Response(content_type='application/json', body=body)
 
     def add_mac(self, req, network_id, mac, **_kwargs):
-        try:
-            # Must convert MAC address into ASCII char types
-            charMAC = haddr_to_bin(mac)
+        # Must convert MAC address into ASCII char types
+        charMAC = haddr_to_bin(mac)
 
+        # Allow APIs to overwrite existing mac to network associations
+        old_net_id = self.mac2net.get_network(charMAC)
+        if old_net_id and old_net_id != network_id:
+            try:
+                self.mac2net.del_mac(charMAC)
+                self.api_db.delMAC(mac)
+            except:
+                # Only way to get here is if DB out of sync with contexts
+                raise
+
+        try:
             self.mac2net.add_mac(charMAC, network_id, NW_ID_EXTERNAL)
             self.api_db.addMAC(network_id, mac)
         except MacAddressDuplicated:
-            return Response(status=200)
+            # Is it even possible to get here?
+            return Response(status=409)
         else:
             return Response(status=200)
 
@@ -203,31 +218,39 @@ class PortController(ControllerBase):
         except NetworkNotFound:
             return Response(status=404)
         except PortAlreadyExist:
-            return Response(status=200)
+            # System allows network ID overwrites; Shouldn't be able to get here
+            pass
 
         return Response(status=200)
 
     def update(self, req, network_id, dpid, port_id, **_kwargs):
         try:
-            try:
-                old_network_id = self.nw.get_network(int(dpid, 16), int(port_id))
-            except PortUnknown:
-                old_network_id = None
+            datapath_id = int(dpid, 16)
+            port = int(port_id)
 
-            # Updating an existing port whose network has changed
-            if self.fv_cli.getSliceName(old_network_id) or (old_network_id == NW_ID_EXTERNAL):
-                flowspace_ids = self.fv_cli.getFlowSpaceIDs(int(dpid,16), int(port_id))
-                for id in flowspace_ids:
-                    ret = self.fv_cli.removeFlowSpace(id)
-                    if (ret.find("success") != -1):
-                        self.fv_cli.delFlowSpaceID(id)
-                        self.api_db.delFlowSpaceID(id)
-                    else:
-                        # Error, how to handle?
-                        continue
+            if port > 0:
+                try:
+                    old_network_id = self.nw.get_network(datapath_id, port)
+                except PortUnknown:
+                    old_network_id = None
 
-            self.nw.update_port(network_id, int(dpid, 16), int(port_id))
-            self.api_db.updatePort(network_id, dpid, port_id)
+                # Updating an existing port whose network has changed
+                if self.fv_cli.getSliceName(old_network_id) or (old_network_id == NW_ID_EXTERNAL):
+                    flowspace_ids = self.fv_cli.getFlowSpaceIDs(datapath_id, port)
+                    for id in flowspace_ids:
+                        ret = self.fv_cli.removeFlowSpace(id)
+                        if (ret.find("success") != -1):
+                            self.fv_cli.delFlowSpaceID(id)
+                            self.api_db.delFlowSpaceID(id)
+                        else:
+                            # Error, how to handle?
+                            continue
+
+                self.nw.update_port(network_id, datapath_id, port)
+                self.api_db.updatePort(network_id, dpid, port_id)
+            else:
+                # Don't raise exception or else q-agt may crash and stop
+                pass
         except (NetworkNotFound, PortUnknown):
             return Response(status=404)
 
@@ -708,6 +731,11 @@ class restapi(app_manager.RyuApp):
             self.port_bond.create_bond(int(dpid, 16), network_id, bond_id)
 
         for (network_id, dpid, port_num, bond_id) in ports:
+            if network_id not in networks:
+                # Delete port? Or just skip?
+                LOG.warn("Found port %s on dpid %s, registered to non-existent network" +
+                            " %s; Skipping creation.", port_num, dpid, network_id)
+                continue
             self.nw.create_port(network_id, int(dpid, 16), int(port_num))
             if bond_id:
                 self.port_bond.add_port(bond_id, int(port_num))
