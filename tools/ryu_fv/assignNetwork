@@ -3,6 +3,7 @@
 #    1: Name of the slice
 #    2: Network UUID to be assigned to the controller of the slice
 
+unset ERR
 if [[ -n "$1" ]]; then
     SLICE_NAME=$1
 else
@@ -17,5 +18,7 @@ else
 fi
 
 if [[ -z "$ERR" ]]; then
-    curl http://$RYU_API_HOST:$RYU_API_PORT/v1.0/flowvisor/$SLICE_NAME/assign/$NET_UUID -X PUT
+    TOKEN=`keystone token-get | grep ' id ' | awk -F '|' '{print $3}'`
+
+    curl -H "X-Auth-Token:$TOKEN" http://$RYU_API_HOST:$RYU_API_PORT/v1/network/flowvisor/$SLICE_NAME/assign/$NET_UUID -X PUT
 fi

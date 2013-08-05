@@ -20,7 +20,9 @@ from ryu.controller import event
 from ryu.controller import dispatcher
 from ryu.controller import dp_type
 from ryu.controller import handler
+from ryu.controller import ofp_event
 from ryu.controller.handler import set_ev_cls
+import ryu.exception as ryu_exc
 
 LOG = logging.getLogger('ryu.controller.dpset')
 
@@ -42,7 +44,42 @@ class EventDP(EventDPBase):
         # True: dp entered
         # False: dp leaving
         super(EventDP, self).__init__(dp)
-        self.enter = enter_leave
+        self.enter_leave = enter_leave
+
+
+class EventPortBase(EventDPBase):
+    def __init__(self, dp, port):
+        super(EventPortBase, self).__init__(dp)
+        self.port = port
+
+
+class EventPortAdd(EventPortBase):
+    def __init__(self, dp, port):
+        super(EventPortAdd, self).__init__(dp, port)
+
+
+class EventPortDelete(EventPortBase):
+    def __init__(self, dp, port):
+        super(EventPortDelete, self).__init__(dp, port)
+
+
+class EventPortModify(EventPortBase):
+    def __init__(self, dp, new_port):
+        super(EventPortModify, self).__init__(dp, new_port)
+
+
+class PortState(dict):
+    def __init__(self):
+        super(PortState, self).__init__()
+
+    def add(self, port_no, port):
+        self[port_no] = port
+
+    def remove(self, port_no):
+        del self[port_no]
+
+    def modify(self, port_no, port):
+        self[port_no] = port
 
 
 # this depends on controller::Datapath and dispatchers in handler
@@ -55,6 +92,7 @@ class DPSet(object):
         self.dp_types = {}
 
         self.dps = {}   # datapath_id => class Datapath
+        self.port_state = {}  # datapath_id => ports
         self.ev_q = dispatcher.EventQueue(QUEUE_NAME_DPSET,
                                           DPSET_EV_DISPATCHER)
         handler.register_instance(self)
@@ -67,16 +105,37 @@ class DPSet(object):
         if dp_type_ is not None:
             dp.dp_type = dp_type_
 
-        self.ev_q.queue(EventDP(dp, True))
         self.dps[dp.id] = dp
+        self.port_state[dp.id] = PortState()
+
+        # If we dispatch the queue, it is possible for another event to cut
+        # in before us.
+        # It would cause event reordering like port del -> port add
+        # prevent such reordering
+        self.ev_q.cork()
+        self.ev_q.queue(EventDP(dp, True))
+
+        # generate port_add event for convenience
+        # so that the user don't have to handle dp enter event
+        for port in dp.ports.values():
+            self._port_added(dp, port)
+        del dp.ports
+        self.ev_q.uncork()
 
     def unregister(self, dp):
+        # generate port_del event for convenience
+        # so that the user don't have to handle dp leave event
+        # Now datapath is already dead, so port status change event doesn't
+        # interfere us.
+        for port in self.port_state.get(dp.id, {}).values():
+            self._port_deleted(dp, port)
+
         if dp.id in self.dps:
+            self.ev_q.queue(EventDP(dp, False))
             del self.dps[dp.id]
+            del self.port_state[dp.id]
             assert dp.id not in self.dp_types
             self.dp_types[dp.id] = getattr(dp, 'dp_type', dp_type.UNKNOWN)
-
-            self.ev_q.queue(EventDP(dp, False))
 
     def set_type(self, dp_id, dp_type_=dp_type.UNKNOWN):
         if dp_id in self.dps:
@@ -91,6 +150,14 @@ class DPSet(object):
 
     def get_all(self):
         return self.dps.items()
+
+    def _port_added(self, datapath, port):
+        self.port_state[datapath.id].add(port.port_no, port)
+        self.ev_q.queue(EventPortAdd(datapath, port))
+
+    def _port_deleted(self, datapath, port):
+        self.port_state[datapath.id].remove(port.port_no)
+        self.ev_q.queue(EventPortDelete(datapath, port))
 
     @set_ev_cls(dispatcher.EventDispatcherChange,
                 dispatcher.QUEUE_EV_DISPATCHER)
@@ -108,3 +175,63 @@ class DPSet(object):
         elif ev.new_dispatcher.name == handler.DISPATCHER_NAME_OFP_DEAD:
             LOG.debug('DPSET: unregister datapath %s', datapath)
             self.unregister(datapath)
+
+    @set_ev_cls(ofp_event.EventOFPSwitchFeatures, handler.CONFIG_DISPATCHER)
+    def switch_features_handler(self, ev):
+        msg = ev.msg
+        datapath = msg.datapath
+        datapath.ports = msg.ports
+
+    @set_ev_cls(ofp_event.EventOFPPortStatus,
+                [handler.CONFIG_DISPATCHER, handler.BARRIER_REPLY_DISPATCHER])
+    def port_status_early_handler(self, ev):
+        msg = ev.msg
+        reason = msg.reason
+        port = msg.desc
+        datapath = msg.datapath
+        ofproto = datapath.ofproto
+
+        if not hasattr(datapath, 'ports', None):
+            # OFPSwitchFeature isn't received yet.
+            return
+
+        if reason == ofproto.OFPPR_ADD:
+            datapath.ports[port.port_no] = port
+        elif reason == ofproto.OFPPR_DELETE:
+            del datapath.ports[port.port_no]
+        else:
+            assert reason == ofproto.OFPPR_MODIFY
+            datapath.ports[port.port_no] = port
+
+    @set_ev_cls(ofp_event.EventOFPPortStatus, handler.MAIN_DISPATCHER)
+    def port_status_handler(self, ev):
+        msg = ev.msg
+        reason = msg.reason
+        datapath = msg.datapath
+        port = msg.desc
+        ofproto = datapath.ofproto
+
+        LOG.debug('port status %s', reason)
+
+        if reason == ofproto.OFPPR_ADD:
+            self._port_added(datapath, port)
+        elif reason == ofproto.OFPPR_DELETE:
+            self._port_deleted(datapath, port)
+        else:
+            assert reason == ofproto.OFPPR_MODIFY
+            self.port_state[datapath.id].modify(port.port_no, port)
+            self.ev_q.queue(EventPortModify(datapath, port))
+
+    def get_port(self, dpid, port_no):
+        try:
+            return self.port_state[dpid][port_no]
+        except KeyError:
+            raise ryu_exc.PortNotFound(dpid=dpid, port=port_no,
+                                       network_id=None)
+
+    def get_port_state(self, dpid, port_no):
+        port = self.get_port(dpid, port_no)
+        return port.state
+
+    def get_ports(self, dpid):
+        return self.port_state[dpid].values()

@@ -14,9 +14,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
 from ryu.base import app_manager
-from ryu.controller import ofp_event
+from ryu.controller import (dispatcher,
+                            handler,
+                            ofp_event)
 from ryu.controller.handler import MAIN_DISPATCHER
 from ryu.controller.handler import set_ev_cls
 from ryu.ofproto import ofproto_v1_0
@@ -28,6 +29,22 @@ class Cbench(app_manager.RyuApp):
     def __init__(self, *args, **kwargs):
         super(Cbench, self).__init__(*args, **kwargs)
 
+    @set_ev_cls(dispatcher.EventDispatcherChange,
+                dispatcher.QUEUE_EV_DISPATCHER)
+    def dispacher_change(self, ev):
+        if ev.ev_q.name != handler.QUEUE_NAME_OFP_MSG:
+            return
+        if ev.new_dispatcher.name != handler.DISPATCHER_NAME_OFP_BARRIER_REPLY:
+            return
+
+        datapath = ev.ev_q.aux
+        assert datapath is not None
+
+        # cbench ignores barrier requests.
+        # So queue barrier reply event artificially as work around
+        barrier_reply = datapath.ofproto_parser.OFPBarrierReply(datapath)
+        datapath.ev_q.queue(ofp_event.EventOFPBarrierReply(barrier_reply))
+
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def packet_in_handler(self, ev):
         msg = ev.msg
@@ -37,6 +54,8 @@ class Cbench(app_manager.RyuApp):
         match = datapath.ofproto_parser.OFPMatch(
             ofproto_v1_0.OFPFW_ALL, 0, 0, 0,
             0, 0, 0, 0, 0, 0, 0, 0, 0)
+
+	print match
 
         mod = datapath.ofproto_parser.OFPFlowMod(
             datapath, match=match, cookie=0, command=ofproto.OFPFC_ADD,

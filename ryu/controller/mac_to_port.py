@@ -26,18 +26,23 @@ class MacToPortTable(object):
     def __init__(self):
         super(MacToPortTable, self).__init__()
         self.mac_to_port = {}
+        self.ip_to_mac = {}
 
     def dpid_add(self, dpid):
         LOG.debug('dpid_add: 0x%016x', dpid)
         self.mac_to_port.setdefault(dpid, {})
+        #self.ip_to_mac.setdefault(dpid, {})
 
-    def port_add(self, dpid, port, mac):
+    def port_add(self, dpid, port, mac, ip = None):
         """
         :returns: old port if learned. (this may be = port)
                   None otherwise
         """
         old_port = self.mac_to_port[dpid].get(mac, None)
         self.mac_to_port[dpid][mac] = port
+        #self.ip_to_mac[dpid][ip] = mac
+        if ip is not None:
+            self.ip_to_mac[ip] = mac
 
         if old_port is not None and old_port != port:
             LOG.debug('port_add: 0x%016x 0x%04x %s',
@@ -55,3 +60,4 @@ class MacToPortTable(object):
 
     def mac_del(self, dpid, mac):
         del self.mac_to_port[dpid][mac]
+

@@ -30,6 +30,7 @@ class Network(object):
         self.nw_id_unknown = nw_id_unknown
         self.networks = {}
         self.dpids = {}
+        self.arp_enabled = False
         
         # The following relies on application to make
         # the necessary assignments

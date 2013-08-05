@@ -15,6 +15,7 @@
 
 import logging
 import struct
+import json
 
 from ryu.base import app_manager
 from ryu.controller import mac_to_port
@@ -23,7 +24,8 @@ from ryu.controller.handler import MAIN_DISPATCHER
 from ryu.controller.handler import set_ev_cls
 from ryu.ofproto import ofproto_v1_0
 from ryu.lib.mac import haddr_to_str
-from ryu.lib import mac
+from ryu.lib.dpid import dpid_to_str
+
 
 LOG = logging.getLogger('ryu.app.simple_switch')
 
@@ -41,6 +43,9 @@ class SimpleSwitch(app_manager.RyuApp):
     def __init__(self, *args, **kwargs):
         super(SimpleSwitch, self).__init__(*args, **kwargs)
         self.mac_to_port = {}
+
+    def ip_to_str(self, addr):
+        return '.'.join('%d' % ord(char) for char in addr)
 
     def add_flow(self, datapath, in_port, dst, actions):
         ofproto = datapath.ofproto
@@ -76,25 +81,16 @@ class SimpleSwitch(app_manager.RyuApp):
 
         # learn a mac address to avoid FLOOD next time.
         self.mac_to_port[dpid][src] = msg.in_port
-        broadcast = (dst == mac.BROADCAST) or mac.is_multicast(dst)
-    
-        if broadcast:
-            out_port = ofproto.OFPP_FLOOD
-            LOG.info("broadcast frame, flood and install flow")
-        elif src != dst:
-            if dst in self.mac_to_port[dpid]:
-                out_port = self.mac_to_port[dpid][dst]
-            else:
-                LOG.info("out_port not found")
-                out_port = ofproto.OFPP_FLOOD
+
+        if dst in self.mac_to_port[dpid]:
+            out_port = self.mac_to_port[dpid][dst]
         else:
-            self._drop_packet(msg)
-            return
+            out_port = ofproto.OFPP_FLOOD
 
         actions = [datapath.ofproto_parser.OFPActionOutput(out_port)]
 
         # install a flow to avoid packet_in next time
-        if broadcast or (out_port != ofproto.OFPP_FLOOD):
+        if out_port != ofproto.OFPP_FLOOD:
             self.add_flow(datapath, msg.in_port, dst, actions)
 
         out = datapath.ofproto_parser.OFPPacketOut(
@@ -117,7 +113,3 @@ class SimpleSwitch(app_manager.RyuApp):
             LOG.info("port modified %s", port_no)
         else:
             LOG.info("Illeagal port state %s %s", port_no, reason)
-
-    @set_ev_cls(ofp_event.EventOFPBarrierReply, MAIN_DISPATCHER)
-    def barrier_replay_handler(self, ev):
-        pass

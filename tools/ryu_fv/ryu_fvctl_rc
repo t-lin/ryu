@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Command line: source ryu_fvctl_rc {RYU API HOST IP} {RYU API PORT NUMBER}
 
+unset ERR
 if [[ -n "$1" ]]; then
     RYU_API_HOST=$1
 else

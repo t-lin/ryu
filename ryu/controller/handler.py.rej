@@ -1,0 +1,85 @@
+--- ryu/controller/handler.py
++++ ryu/controller/handler.py
+@@ -112,7 +120,7 @@
+             d.register_handler(m.ev_cls, m)
+ 
+ 
+- <at> register_cls([HANDSHAKE_DISPATCHER, CONFIG_DISPATCHER, MAIN_DISPATCHER])
++@register_cls(ALL_HANDLERS)
+ class EchoHandler(object):
+     @staticmethod
+     @set_ev_cls(ofp_event.EventOFPEchoRequest)
+@@ -134,7 +142,7 @@
+         pass
+ 
+ 
+- <at> register_cls([HANDSHAKE_DISPATCHER, CONFIG_DISPATCHER, MAIN_DISPATCHER])
++@register_cls(ALL_HANDLERS)
+ class ErrorMsgHandler(object):
+     @staticmethod
+     @set_ev_cls(ofp_event.EventOFPErrorMsg)
+@@ -175,8 +183,8 @@
+         features_reqeust = datapath.ofproto_parser.OFPFeaturesRequest(datapath)
+         datapath.send_msg(features_reqeust)
+ 
+-        # now move on to config state
+-        LOG.debug('move onto config mode')
++        # now move on to switch feature state
++        LOG.debug('move onto switch feature mode')
+         datapath.ev_q.set_dispatcher(CONFIG_DISPATCHER)
+ 
+ 
+@@ -188,7 +196,6 @@
+         msg = ev.msg
+         datapath = msg.datapath
+         LOG.debug('switch features ev %s', msg)
+-
+         datapath.id = msg.datapath_id
+ 
+         ofproto = datapath.ofproto
+@@ -205,17 +212,15 @@
+         datapath.send_delete_all_flows()
+ 
+         datapath.send_barrier()
++        LOG.debug('move onto barrier reply mode')
++        ev.msg.datapath.ev_q.set_dispatcher(BARRIER_REPLY_DISPATCHER)
+ 
+-        # We had better to move on to the main state after getting the
+-        # response of the barrier since it guarantees that the switch
+-        # is in the known state (all the flows were removed). However,
+-        # cbench doesn't work because it ignores the barrier. Also,
+-        # the above "known" state doesn't always work (for example,
+-        # the secondary controller should not remove all the flows in
+-        # the case of HA configuration). Let's move on to the main
+-        # state here for now. I guess that we need API to enable
+-        # applications to initialize switches in their own ways.
+ 
++@register_cls(BARRIER_REPLY_DISPATCHER)
++class BarrierReplyHandler(object):
++    @staticmethod
++    @set_ev_cls(ofp_event.EventOFPBarrierReply)
++    def barrier_reply_handler(ev):
+         LOG.debug('move onto main mode')
+         ev.msg.datapath.ev_q.set_dispatcher(MAIN_DISPATCHER)
+ 
+@@ -226,20 +231,10 @@
+     def flow_removed_handler(ev):
+         LOG.debug("flow removed ev %s msg %s", ev, ev.msg)
+ 
+-    @staticmethod
+-    @set_ev_cls(ofp_event.EventOFPBarrierReply)
+-    def barrier_reply_handler(ev):
+-        LOG.debug('barrier reply ev %s msg %s', ev, ev.msg)
+-
+ 
+ @register_cls(MAIN_DISPATCHER)
+ class MainHandler(object):
+     @staticmethod
+-    @set_ev_cls(ofp_event.EventOFPFlowRemoved)
+-    def flow_removed_handler(ev):
+-        pass
+-
+-    @staticmethod
+     @set_ev_cls(ofp_event.EventOFPPortStatus)
+     def port_status_handler(ev):
+         msg = ev.msg

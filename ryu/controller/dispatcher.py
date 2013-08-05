@@ -48,6 +48,7 @@ class EventQueue(TrackInstances):
         self._dispatcher = dispatcher.clone()
         self.is_dispatching = False
         self.ev_q = Queue()
+        self.cork_count = 0
         self.aux = aux  # for EventQueueCreate event
 
         self._queue_q_ev(EventQueueCreate(self, True))
@@ -84,9 +85,6 @@ class EventQueue(TrackInstances):
         self._queue_q_ev(EventDispatcherChange(self, old, new))
         old.close()
 
-    def queue_raw(self, ev):
-        self.ev_q.put(ev)
-
     class _EventQueueGuard(object):
         def __init__(self, ev_q):
             self.ev_q = ev_q
@@ -98,18 +96,42 @@ class EventQueue(TrackInstances):
             self.ev_q.is_dispatching = False
             return False
 
+    def _undispatchable(self):
+        return self.is_dispatching or self.cork_count > 0
+
+    def _flush(self):
+        while not self.ev_q.empty():
+            ev = self.ev_q.get()
+            self._dispatcher(ev)
+
+    def cork(self):
+        """
+        cork the dispatcher
+        """
+        self.cork_count += 1
+
+    def uncork(self):
+        """
+        uncork the dispatcher, and flush queued events if possible.
+        """
+        assert self.cork_count > 0
+        self.cork_count -= 1
+        if self._undispatchable():
+            return
+
+        with self._EventQueueGuard(self):
+            self._flush()
+
     def queue(self, ev):
-        if self.is_dispatching:
-            self.queue_raw(ev)
+        if self._undispatchable():
+            self.ev_q.put(ev)
             return
 
         with self._EventQueueGuard(self):
             assert self.ev_q.empty()
 
             self._dispatcher(ev)
-            while not self.ev_q.empty():
-                ev = self.ev_q.get()
-                self._dispatcher(ev)
+            self._flush()
 
 
 class EventDispatcher(TrackInstances):

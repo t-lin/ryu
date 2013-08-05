@@ -19,6 +19,7 @@
 import sys
 from optparse import OptionParser
 
+from ryu.app.client import DiscoveryClient
 from ryu.app.client import OFPClient
 
 
@@ -33,7 +34,9 @@ def client_test():
         parser.print_help()
         sys.exit(1)
 
+    address = options.host + ':' + str(options.port)
     client = OFPClient(options.host + ':' + str(options.port))
+    discovery_client = DiscoveryClient(address)
     commands = {
         'list_nets': lambda a: sys.stdout.write(client.get_networks()),
         'create_net': lambda a: client.create_network(a[1]),
@@ -42,7 +45,12 @@ def client_test():
         'list_ports': lambda a: sys.stdout.write(client.get_ports(a[1])),
         'create_port': lambda a: client.create_port(a[1], a[2], a[3]),
         'update_port': lambda a: client.update_port(a[1], a[2], a[3]),
-        'delete_port': lambda a: client.delete_port(a[1], a[2], a[3])
+        'delete_port': lambda a: client.delete_port(a[1], a[2], a[3]),
+        'list_links': lambda a: sys.stdout.write(
+            discovery_client.list_links()),
+        'list_switch_links': lambda a: sys.stdout.write(
+            discovery_client.list_switch_links(a[1])),
+ 
     }
 
     # allow '-', instead of '_'

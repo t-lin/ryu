@@ -760,7 +760,9 @@ class OFPActionExperimenter(OFPAction):
     def parser(cls, buf, offset):
         (type_, len_, experimenter) = struct.unpack_from(
             ofproto_v1_2.OFP_ACTION_EXPERIMENTER_HEADER_PACK_STR, buf, offset)
-        return cls(experimenter)
+        ex = cls(experimenter)
+        ex.len = len_
+        return ex
 
     def serialize(self, buf, offset):
         msg_pack_into(ofproto_v1_2.OFP_ACTION_EXPERIMENTER_HEADER_PACK_STR,
@@ -2073,6 +2075,16 @@ class MTVlanVid(OFPMatchField):
         super(MTVlanVid, self).__init__(header)
         self.value = value
         self.mask = mask
+
+    @classmethod
+    def field_parser(cls, header, buf, offset):
+        m = super(MTVlanVid, cls).field_parser(header, buf, offset)
+        m.value &= ~ofproto_v1_2.OFPVID_PRESENT
+        return m
+
+    def serialize(self, buf, offset):
+        self.value |= ofproto_v1_2.OFPVID_PRESENT
+        super(MTVlanVid, self).serialize(buf, offset)
 
 
 @OFPMatchField.register_field_header([ofproto_v1_2.OXM_OF_VLAN_PCP])
