@@ -25,7 +25,7 @@ class RyuClientBase(object):
         res = urlparse.SplitResult('', address, '', '', '')
         self.host = res.hostname
         self.port = res.port
-        self.url_prefix = '/v1.0/network/'
+        self.url_prefix = '/' + self.version + '/'
 
     def _do_request(self, method, action):
         conn = httplib.HTTPConnection(self.host, self.port)
