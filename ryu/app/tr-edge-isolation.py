@@ -70,8 +70,16 @@ class SimpleIsolation(app_manager.RyuApp):
         msg = ev.msg
         datapath = msg.datapath
 
-        datapath.send_delete_all_flows()
-        datapath.send_barrier()
+        #datapath.send_delete_all_flows()
+        #datapath.send_barrier()
+
+        # Change to work with Cbench
+        # Automatically register all ports with default network
+        network_id = NW_ID_ORION
+        if network_id not in self.nw.list_networks():
+            self.nw.create_network(network_id)
+        for port in ev.msg.ports:
+            self.nw.update_port(network_id, ev.msg.datapath_id, port)
 
         self.mac2port.dpid_add(ev.msg.datapath_id)
         self.nw.add_datapath(ev.msg)
@@ -397,14 +405,23 @@ class SimpleIsolation(app_manager.RyuApp):
         msg = ev.msg
         datapath = msg.datapath
 
-        datapath.send_delete_all_flows()
-        datapath.send_barrier()
+        #datapath.send_delete_all_flows()
+        #datapath.send_barrier()
+
+        # Change to work with Cbench
+        # Automatically register all ports with default network
+        network_id = NW_ID_ORION
+        if network_id not in self.nw.list_networks():
+            self.nw.create_network(network_id)
+        self.nw.update_port(network_id, datapath.id, msg.desc.port_no)
+
         self.nw.port_added(datapath, msg.desc.port_no)
 
     def _port_del(self, ev):
         # free mac addresses associated to this VM port,
         # and delete related flow entries for later reuse of mac address
 
+        """
         dps_needs_barrier = set()
 
         msg = ev.msg
@@ -459,6 +476,7 @@ class SimpleIsolation(app_manager.RyuApp):
 
         for dp in dps_needs_barrier:
             dp.send_barrier()
+        """
 
     @set_ev_cls(ofp_event.EventOFPPortStatus, MAIN_DISPATCHER)
     def port_status_handler(self, ev):
