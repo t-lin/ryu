@@ -49,6 +49,10 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
         self.port = FLAGS.janus_port
         self.url_prefix = '/v1.0/events/0'
 
+        # Ryu API
+        self.api_host = FLAGS.wsapi_host
+        self.api_port = FLAGS.wsapi_port
+
     def _forward2Controller(self, method, url, body=None, headers=None):
         conn = httplib.HTTPConnection(self.host, self.port)
         conn.request(method, url, body, headers)
@@ -132,6 +136,7 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
         method = 'POST'
         body = {'of_event_id': JANEVENTS.JAN_EV_PACKETIN}
         body.update(contents.getContents())
+        body.update({'ctrl_api': self.api_host + ':' + str(self.api_port)})
         body = json.dumps({'event': body})
         header = {"Content-Type": "application/json"}
 
