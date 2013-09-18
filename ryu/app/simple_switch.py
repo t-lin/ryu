@@ -44,7 +44,7 @@ class SimpleSwitch(app_manager.RyuApp):
 
     def __init__(self, *args, **kwargs):
         super(SimpleSwitch, self).__init__(*args, **kwargs)
-        self.mac2port = kwargs['mac2port']
+        self.mac2port = {}
         self._demo_app = None
         self._last_demo_change = 0
 
