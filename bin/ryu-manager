@@ -22,10 +22,11 @@ import logging
 import sys
 
 from gevent import monkey
-monkey.patch_all()
+# monkey.patch(all=False, socket=True, time=True, thread=False)
+# monkey.patch_all()
 
 from ryu import log
-log.early_init_log(logging.DEBUG)
+log.early_init_log( logging.DEBUG )
 
 from ryu import version
 from ryu import utils
@@ -43,45 +44,45 @@ from ryu.controller import api_db
 import ryu.contrib
 
 FLAGS = gflags.FLAGS
-gflags.DEFINE_bool('version', False, 'output version information and exit')
-gflags.DEFINE_multistring('app_lists',
+gflags.DEFINE_bool( 'version', False, 'output version information and exit' )
+gflags.DEFINE_multistring( 'app_lists',
                           [],
-                          'application module name to run')
+                          'application module name to run' )
 
 
 def main():
     utils.find_flagfile()
-    args = FLAGS(sys.argv)
+    args = FLAGS( sys.argv )
 
     if FLAGS.version:
         print 'ryu-manager %s' % version
-        sys.exit(0)
+        sys.exit( 0 )
 
     log.init_log()
 
     # always enable ofp for now.
     FLAGS.app_lists += ['ryu.controller.ofp_handler']
 
-    if len(args) > 1:
+    if len( args ) > 1:
         FLAGS.app_lists += args[1:]
 
     app_mgr = AppManager()
-    app_mgr.load_apps(FLAGS.app_lists)
+    app_mgr.load_apps( FLAGS.app_lists )
     contexts = app_mgr.create_contexts()
-    app_mgr.instantiate_apps(**contexts)
+    app_mgr.instantiate_apps( **contexts )
 
     services = []
 
     ctlr = controller.OpenFlowController()
-    thr = gevent.spawn_later(0, ctlr)
-    services.append(thr)
+    thr = gevent.spawn_later( 0, ctlr )
+    services.append( thr )
 
-    webapp = wsgi.start_service(app_mgr)
+    webapp = wsgi.start_service( app_mgr )
     if webapp:
-        thr = gevent.spawn_later(0, webapp)
-        services.append(thr)
+        thr = gevent.spawn_later( 0, webapp )
+        services.append( thr )
 
-    gevent.joinall(services)
+    gevent.joinall( services )
     app_mgr.close()
 
 

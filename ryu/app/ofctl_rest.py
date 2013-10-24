@@ -35,11 +35,11 @@ from ryu.app.wsgi import ControllerBase, WSGIApplication
 from janus.network.of_controller import event_contents
 
 
-LOG = logging.getLogger('ryu.app.ofctl_rest')
+LOG = logging.getLogger( 'ryu.app.ofctl_rest' )
 
 # REST API
 #
-## Retrieve the switch stats
+# # Retrieve the switch stats
 #
 # get the list of all switches
 # GET /stats/switches
@@ -53,7 +53,7 @@ LOG = logging.getLogger('ryu.app.ofctl_rest')
 # get ports stats of the switch
 # GET /stats/port/<dpid>
 #
-## Update the switch stats
+# # Update the switch stats
 #
 # add a flow entry
 # POST /stats/flowentry
@@ -63,70 +63,70 @@ LOG = logging.getLogger('ryu.app.ofctl_rest')
 #
 
 
-class StatsController(ControllerBase):
-    def __init__(self, req, link, data, **config):
-        super(StatsController, self).__init__(req, link, data, **config)
+class StatsController( ControllerBase ):
+    def __init__( self, req, link, data, **config ):
+        super( StatsController, self ).__init__( req, link, data, **config )
         self.dpset = data['dpset']
         self.waiters = data['waiters']
 
-    def get_dpids(self, req, **_kwargs):
+    def get_dpids( self, req, **_kwargs ):
         dps = self.dpset.dps.keys()
-        body = json.dumps(dps)
-        return (Response(content_type='application/json', body=body))
+        body = json.dumps( dps )
+        return ( Response( content_type = 'application/json', body = body ) )
 
-    def get_desc_stats(self, req, dpid, **_kwargs):
-        dp = self.dpset.get(int(dpid))
+    def get_desc_stats( self, req, dpid, **_kwargs ):
+        dp = self.dpset.get( int( dpid ) )
         if dp is None:
-            return Response(status=404)
+            return Response( status = 404 )
 
         if dp.ofproto.OFP_VERSION == ofproto_v1_0.OFP_VERSION:
-            desc = ofctl_v1_0.get_desc_stats(dp, self.waiters)
+            desc = ofctl_v1_0.get_desc_stats( dp, self.waiters )
         else:
-            LOG.debug('Unsupported OF protocol')
-            return Response(status=501)
+            LOG.debug( 'Unsupported OF protocol' )
+            return Response( status = 501 )
 
-        body = json.dumps(desc)
-        return (Response(content_type='application/json', body=body))
+        body = json.dumps( desc )
+        return ( Response( content_type = 'application/json', body = body ) )
 
-    def get_flow_stats(self, req, dpid, **_kwargs):
-        dp = self.dpset.get(int(dpid))
+    def get_flow_stats( self, req, dpid, **_kwargs ):
+        dp = self.dpset.get( int( dpid ) )
         if dp is None:
-            return Response(status=404)
+            return Response( status = 404 )
 
         if dp.ofproto.OFP_VERSION == ofproto_v1_0.OFP_VERSION:
-            flows = ofctl_v1_0.get_flow_stats(dp, self.waiters)
+            flows = ofctl_v1_0.get_flow_stats( dp, self.waiters )
         else:
-            LOG.debug('Unsupported OF protocol')
-            return Response(status=501)
+            LOG.debug( 'Unsupported OF protocol' )
+            return Response( status = 501 )
 
-        body = json.dumps(flows)
-        return (Response(content_type='application/json', body=body))
+        body = json.dumps( flows )
+        return ( Response( content_type = 'application/json', body = body ) )
 
-    def get_port_stats(self, req, dpid, **_kwargs):
-        dp = self.dpset.get(int(dpid))
+    def get_port_stats( self, req, dpid, **_kwargs ):
+        dp = self.dpset.get( int( dpid ) )
         if dp is None:
-            return Response(status=404)
+            return Response( status = 404 )
 
         if dp.ofproto.OFP_VERSION == ofproto_v1_0.OFP_VERSION:
-            ports = ofctl_v1_0.get_port_stats(dp, self.waiters)
+            ports = ofctl_v1_0.get_port_stats( dp, self.waiters )
         else:
-            LOG.debug('Unsupported OF protocol')
-            return Response(status=501)
+            LOG.debug( 'Unsupported OF protocol' )
+            return Response( status = 501 )
 
-        body = json.dumps(ports)
-        return (Response(content_type='application/json', body=body))
+        body = json.dumps( ports )
+        return ( Response( content_type = 'application/json', body = body ) )
 
-    def mod_flow_entry(self, req, cmd, **_kwargs):
+    def mod_flow_entry( self, req, cmd, **_kwargs ):
         try:
-            flow = eval(req.body)
+            flow = eval( req.body )
         except SyntaxError:
-            LOG.debug('invalid syntax %s', req.body)
-            return Response(status=400)
+            LOG.debug( 'invalid syntax %s', req.body )
+            return Response( status = 400 )
 
-        dpid = flow.get('dpid')
-        dp = self.dpset.get(int(dpid))
+        dpid = flow.get( 'dpid' )
+        dp = self.dpset.get( int( dpid ) )
         if dp is None:
-            return Response(status=404)
+            return Response( status = 404 )
 
         if cmd == 'add':
             cmd = dp.ofproto.OFPFC_ADD
@@ -134,110 +134,111 @@ class StatsController(ControllerBase):
             cmd = dp.ofproto.OFPFC_MODIFY
         elif cmd == 'delete':
             cmd = dp.ofproto.OFPFC_DELETE
+            print "dpid %s, %s, flow in delete is %s" % ( dpid, hex( dpid ), flow )
         else:
-            return Response(status=404)
+            return Response( status = 404 )
 
         if dp.ofproto.OFP_VERSION == ofproto_v1_0.OFP_VERSION:
-            ofctl_v1_0.mod_flow_entry(dp, flow, cmd)
+            ofctl_v1_0.mod_flow_entry( dp, flow, cmd )
         else:
-            LOG.debug('Unsupported OF protocol')
-            return Response(status=501)
+            LOG.debug( 'Unsupported OF protocol' )
+            return Response( status = 501 )
 
-        return Response(status=200)
+        return Response( status = 200 )
 
-    def delete_flow_entry(self, req, dpid, **_kwargs):
-        dp = self.dpset.get(int(dpid))
+    def delete_flow_entry( self, req, dpid, **_kwargs ):
+        dp = self.dpset.get( int( dpid ) )
         if dp is None:
-            return Response(status=404)
+            return Response( status = 404 )
 
         if dp.ofproto.OFP_VERSION == ofproto_v1_0.OFP_VERSION:
-            ofctl_v1_0.delete_flow_entry(dp)
+            ofctl_v1_0.delete_flow_entry( dp )
         else:
-            LOG.debug('Unsupported OF protocol')
-            return Response(status=501)
+            LOG.debug( 'Unsupported OF protocol' )
+            return Response( status = 501 )
 
-        return Response(status=200)
+        return Response( status = 200 )
 
-class PacketController(ControllerBase):
-    def __init__(self, req, link, data, **config):
-        super(PacketController, self).__init__(req, link, data, **config)
-        self.dpset = data.get('dpset')
+class PacketController( ControllerBase ):
+    def __init__( self, req, link, data, **config ):
+        super( PacketController, self ).__init__( req, link, data, **config )
+        self.dpset = data.get( 'dpset' )
         assert self.dpset is not None
 
-    def output_packet(self, req, dpid, buffer_id, in_port):
-        dpid = int(dpid)
-        buffer_id = int(buffer_id)
-        in_port = int(in_port)
+    def output_packet( self, req, dpid, buffer_id, in_port ):
+        dpid = int( dpid )
+        buffer_id = int( buffer_id )
+        in_port = int( in_port )
 
         try:
-            #out_port_list = eval(req.body)
-            output_dict = eval(req.body)
-            out_port_list = output_dict.get('out_port_list')
-            mydata = output_dict.get('data')
-            assert type(output_dict) is dict
-            #TODO: put assert for mydata, but sometimes data might be Null
-            #assert type(mydata) is str
-            assert type(out_port_list) is list
+            # out_port_list = eval(req.body)
+            output_dict = eval( req.body )
+            out_port_list = output_dict.get( 'out_port_list' )
+            mydata = output_dict.get( 'data' )
+            assert type( output_dict ) is dict
+            # TODO: put assert for mydata, but sometimes data might be Null
+            # assert type(mydata) is str
+            assert type( out_port_list ) is list
         except SyntaxError:
-            LOG.debug('invalid syntax %s', req.body)
-            return Response(status=400)
+            LOG.debug( 'invalid syntax %s', req.body )
+            return Response( status = 400 )
 
-        datapath = self.dpset.get(dpid)
+        datapath = self.dpset.get( dpid )
         assert datapath is not None
         ofproto = datapath.ofproto
 
         actions = []
         for out_port in out_port_list:
-            actions.append(datapath.ofproto_parser.OFPActionOutput(int(out_port)))
+            actions.append( datapath.ofproto_parser.OFPActionOutput( int( out_port ) ) )
 
         if mydata is not None:
-            mydata = eval(mydata)
-            src = mydata.get(event_contents.DL_SRC)
-            dst = mydata.get(event_contents.DL_DST)
-            _eth_type = mydata.get(event_contents.ETH_TYPE)
-            HTYPE = mydata.get(event_contents.ARP_HTYPE)
-            PTYPE = mydata.get(event_contents.ARP_PTYPE)
-            HLEN = mydata.get(event_contents.ARP_HLEN)
-            PLEN = mydata.get(event_contents.ARP_PLEN)
-            OPER = mydata.get(event_contents.ARP_OPER)
-            SPA = mydata.get(event_contents.ARP_SPA)
-            SHA = mydata.get(event_contents.ARP_SHA)
-            TPA = mydata.get(event_contents.ARP_TPA)
-            THA = mydata.get(event_contents.ARP_THA)
+            mydata = eval( mydata )
+            src = mydata.get( event_contents.DL_SRC )
+            dst = mydata.get( event_contents.DL_DST )
+            _eth_type = mydata.get( event_contents.ETH_TYPE )
+            HTYPE = mydata.get( event_contents.ARP_HTYPE )
+            PTYPE = mydata.get( event_contents.ARP_PTYPE )
+            HLEN = mydata.get( event_contents.ARP_HLEN )
+            PLEN = mydata.get( event_contents.ARP_PLEN )
+            OPER = mydata.get( event_contents.ARP_OPER )
+            SPA = mydata.get( event_contents.ARP_SPA )
+            SHA = mydata.get( event_contents.ARP_SHA )
+            TPA = mydata.get( event_contents.ARP_TPA )
+            THA = mydata.get( event_contents.ARP_THA )
 
-            mybuffer = ctypes.create_string_buffer(42)
+            mybuffer = ctypes.create_string_buffer( 42 )
 
-            struct.pack_into('!6s6sHHHbbH6s4s6s4s',
-                             mybuffer, 0, haddr_to_bin(src), haddr_to_bin(dst),
+            struct.pack_into( '!6s6sHHHbbH6s4s6s4s',
+                             mybuffer, 0, haddr_to_bin( dst ), haddr_to_bin( src ),
                              _eth_type, HTYPE, PTYPE, HLEN, PLEN, OPER,
-                             haddr_to_bin(SHA), ipaddr_to_bin(SPA),
-                             haddr_to_bin(THA), ipaddr_to_bin(TPA))
-            datapath.send_packet_out(actions=actions, data=mybuffer)
+                             haddr_to_bin( SHA ), ipaddr_to_bin( SPA ),
+                             haddr_to_bin( THA ), ipaddr_to_bin( TPA ) )
+            datapath.send_packet_out( actions = actions, data = mybuffer )
         else:
-            datapath.send_packet_out(int(buffer_id), int(in_port), actions=actions, data=None)
- 
-        return Response(status=200)
+            datapath.send_packet_out( int( buffer_id ), int( in_port ), actions = actions, data = None )
 
-    def drop_packet(self, req, dpid, buffer_id, in_port):
-        dpid = int(dpid)
-        buffer_id = int(buffer_id)
-        in_port = int(in_port)
+        return Response( status = 200 )
 
-        datapath = self.dpset.get(dpid)
+    def drop_packet( self, req, dpid, buffer_id, in_port ):
+        dpid = int( dpid )
+        buffer_id = int( buffer_id )
+        in_port = int( in_port )
+
+        datapath = self.dpset.get( dpid )
         assert datapath is not None
-        LOG.info('\nthe packet is going to be dropped. dpid=%s, in_port=%s\n', dpid, in_port)
-        datapath.send_packet_out(buffer_id, in_port, [])
-        return Response(status=200)
+        LOG.info( '\nthe packet is going to be dropped. dpid=%s, in_port=%s\n', dpid, in_port )
+        datapath.send_packet_out( buffer_id, in_port, [] )
+        return Response( status = 200 )
 
-class RestStatsApi(app_manager.RyuApp):
+class RestStatsApi( app_manager.RyuApp ):
     OFP_VERSIONS = [ofproto_v1_0.OFP_VERSION]
     _CONTEXTS = {
         'dpset': dpset.DPSet,
         'wsgi': WSGIApplication
     }
 
-    def __init__(self, *args, **kwargs):
-        super(RestStatsApi, self).__init__(*args, **kwargs)
+    def __init__( self, *args, **kwargs ):
+        super( RestStatsApi, self ).__init__( *args, **kwargs )
         self.dpset = kwargs['dpset']
         wsgi = kwargs['wsgi']
         self.waiters = {}
@@ -249,46 +250,46 @@ class RestStatsApi(app_manager.RyuApp):
         wsgi.registory['StatsController'] = self.data
         path = '/stats'
         uri = path + '/switches'
-        mapper.connect('stats', uri,
-                       controller=StatsController, action='get_dpids',
-                       conditions=dict(method=['GET']))
+        mapper.connect( 'stats', uri,
+                       controller = StatsController, action = 'get_dpids',
+                       conditions = dict( method = ['GET'] ) )
 
         uri = path + '/desc/{dpid}'
-        mapper.connect('stats', uri,
-                       controller=StatsController, action='get_desc_stats',
-                       conditions=dict(method=['GET']))
+        mapper.connect( 'stats', uri,
+                       controller = StatsController, action = 'get_desc_stats',
+                       conditions = dict( method = ['GET'] ) )
 
         uri = path + '/flow/{dpid}'
-        mapper.connect('stats', uri,
-                       controller=StatsController, action='get_flow_stats',
-                       conditions=dict(method=['GET']))
+        mapper.connect( 'stats', uri,
+                       controller = StatsController, action = 'get_flow_stats',
+                       conditions = dict( method = ['GET'] ) )
 
         uri = path + '/port/{dpid}'
-        mapper.connect('stats', uri,
-                       controller=StatsController, action='get_port_stats',
-                       conditions=dict(method=['GET']))
+        mapper.connect( 'stats', uri,
+                       controller = StatsController, action = 'get_port_stats',
+                       conditions = dict( method = ['GET'] ) )
 
         uri = path + '/flowentry/{cmd}'
-        mapper.connect('stats', uri,
-                       controller=StatsController, action='mod_flow_entry',
-                       conditions=dict(method=['POST']))
+        mapper.connect( 'stats', uri,
+                       controller = StatsController, action = 'mod_flow_entry',
+                       conditions = dict( method = ['POST'] ) )
         uri = path + '/flowentry/clear/{dpid}'
-        mapper.connect('stats', uri,
-                       controller=StatsController, action='delete_flow_entry',
-                       conditions=dict(method=['DELETE']))
+        mapper.connect( 'stats', uri,
+                       controller = StatsController, action = 'delete_flow_entry',
+                       conditions = dict( method = ['DELETE'] ) )
 
         # For Janus -> Ryu APIs
         wsgi.registory['PacketController'] = {'dpset' : self.dpset}
         uri = '/v1.0/packetAction'
-        mapper.connect('pktCtl', uri + '/{dpid}/output/{buffer_id}_{in_port}',
-                       controller=PacketController, action='output_packet',
-                       conditions=dict(method=['PUT']))
+        mapper.connect( 'pktCtl', uri + '/{dpid}/output/{buffer_id}_{in_port}',
+                       controller = PacketController, action = 'output_packet',
+                       conditions = dict( method = ['PUT'] ) )
 
-        mapper.connect('pktCtl', uri + '/{dpid}/drop/{buffer_id}_{in_port}',
-                       controller=PacketController, action='drop_packet',
-                       conditions=dict(method=['DELETE']))
+        mapper.connect( 'pktCtl', uri + '/{dpid}/drop/{buffer_id}_{in_port}',
+                       controller = PacketController, action = 'drop_packet',
+                       conditions = dict( method = ['DELETE'] ) )
 
-    def stats_reply_handler(self, ev):
+    def stats_reply_handler( self, ev ):
         msg = ev.msg
         dp = msg.datapath
 
@@ -297,7 +298,7 @@ class RestStatsApi(app_manager.RyuApp):
         if msg.xid not in self.waiters[dp.id]:
             return
         lock, msgs = self.waiters[dp.id][msg.xid]
-        msgs.append(msg)
+        msgs.append( msg )
         print 'stats_reply_handler:', msgs
 
         if msg.flags & dp.ofproto.OFPSF_REPLY_MORE:
@@ -305,15 +306,15 @@ class RestStatsApi(app_manager.RyuApp):
         del self.waiters[dp.id][msg.xid]
         lock.set()
 
-    @set_ev_cls(ofp_event.EventOFPDescStatsReply, MAIN_DISPATCHER)
-    def desc_stats_reply_handler(self, ev):
-        self.stats_reply_handler(ev)
+    @set_ev_cls( ofp_event.EventOFPDescStatsReply, MAIN_DISPATCHER )
+    def desc_stats_reply_handler( self, ev ):
+        self.stats_reply_handler( ev )
 
-    @set_ev_cls(ofp_event.EventOFPFlowStatsReply, MAIN_DISPATCHER)
-    def flow_stats_reply_handler(self, ev):
-        self.stats_reply_handler(ev)
+    @set_ev_cls( ofp_event.EventOFPFlowStatsReply, MAIN_DISPATCHER )
+    def flow_stats_reply_handler( self, ev ):
+        self.stats_reply_handler( ev )
 
-    @set_ev_cls(ofp_event.EventOFPPortStatsReply, MAIN_DISPATCHER)
-    def port_stats_reply_handler(self, ev):
-        self.stats_reply_handler(ev)
+    @set_ev_cls( ofp_event.EventOFPPortStatsReply, MAIN_DISPATCHER )
+    def port_stats_reply_handler( self, ev ):
+        self.stats_reply_handler( ev )
 
