@@ -151,28 +151,28 @@ class LLDPPacket(object):
     CHASSIS_ID_PREFIX_LEN = len(CHASSIS_ID_PREFIX)
     CHASSIS_ID_FMT = CHASSIS_ID_PREFIX + '%s'
 
-    PORT_ID_STR = '!I'      # uint32_t
+    PORT_ID_STR = '!I'  # uint32_t
     PORT_ID_SIZE = 4
 
     @staticmethod
     def lldp_packet(dpid, port_no, dl_addr, ttl):
-        tlv_chassis_id = ChassisID(subtype=ChassisID.SUB_LOCALLY_ASSIGNED,
-                                   chassis_id=LLDPPacket.CHASSIS_ID_FMT %
+        tlv_chassis_id = ChassisID(subtype = ChassisID.SUB_LOCALLY_ASSIGNED,
+                                   chassis_id = LLDPPacket.CHASSIS_ID_FMT %
                                    dpid_to_str(dpid))
 
-        tlv_port_id = PortID(subtype=PortID.SUB_PORT_COMPONENT,
-                             port_id=struct.pack(LLDPPacket.PORT_ID_STR,
+        tlv_port_id = PortID(subtype = PortID.SUB_PORT_COMPONENT,
+                             port_id = struct.pack(LLDPPacket.PORT_ID_STR,
                                                  port_no))
 
-        tlv_ttl = TTL(ttl=ttl)
+        tlv_ttl = TTL(ttl = ttl)
         tlv_end = End()
 
         tlvs = (tlv_chassis_id, tlv_port_id, tlv_ttl, tlv_end)
-        lldp_data = LLDP(tlvs=tlvs)
+        lldp_data = LLDP(tlvs = tlvs)
 
-        eth = Ethernet(dst=lldp.LLDP_MAC_NEAREST_BRIDGE, src=dl_addr,
-                       type=lldp.ETH_TYPE_LLDP, data=lldp_data)
-        return str(eth)         # serialize it
+        eth = Ethernet(dst = lldp.LLDP_MAC_NEAREST_BRIDGE, src = dl_addr,
+                       type = lldp.ETH_TYPE_LLDP, data = lldp_data)
+        return str(eth)  # serialize it
 
     class LLDPUnknownFormat(ryu_exc.RyuException):
         message = '%(msg)s'
@@ -186,32 +186,32 @@ class LLDPPacket(object):
         if not (eth.dst == lldp.LLDP_MAC_NEAREST_BRIDGE and
                 eth.type == lldp.ETH_TYPE_LLDP):
             raise LLDPPacket.NotLLDP(
-                msg='unknown dst mac(%s) or type(%s)' % (eth.dst, eth.type))
+                msg = 'unknown dst mac(%s) or type(%s)' % (eth.dst, eth.type))
         try:
             lldp_data = eth.lldp
         except:
             LOG.debug('Invalid LLDP message')
-            raise LLDPPacket.LLDPUnknownFormat(msg='Invalid LLDP message')
+            raise LLDPPacket.LLDPUnknownFormat(msg = 'Invalid LLDP message')
 
         chassis_id = lldp_data.tlvs[0]
         if chassis_id.subtype != ChassisID.SUB_LOCALLY_ASSIGNED:
             raise LLDPPacket.LLDPUnknownFormat(
-                msg='unknown chassis id subtype %d' % chassis_id.subtype)
+                msg = 'unknown chassis id subtype %d' % chassis_id.subtype)
         chassis_id = chassis_id.chassis_id
         if not chassis_id.startswith(LLDPPacket.CHASSIS_ID_PREFIX):
             raise LLDPPacket.LLDPUnknownFormat(
-                msg='unknown chassis id format %s' % chassis_id)
+                msg = 'unknown chassis id format %s' % chassis_id)
         src_dpid = str_to_dpid(chassis_id[LLDPPacket.CHASSIS_ID_PREFIX_LEN:])
 
         port_id = lldp_data.tlvs[1]
         if port_id.subtype != PortID.SUB_PORT_COMPONENT:
             raise LLDPPacket.LLDPUnknownFormat(
-                msg='unknown port id subtype %d' % port_id.subtype)
+                msg = 'unknown port id subtype %d' % port_id.subtype)
         port_id = port_id.port_id
         if len(port_id) != LLDPPacket.PORT_ID_SIZE:
             raise LLDPPacket.LLDPUnknownFormat(
-                msg='unknown port id %d' % port_id)
-        (src_port_no, ) = struct.unpack(LLDPPacket.PORT_ID_STR, port_id)
+                msg = 'unknown port id %d' % port_id)
+        (src_port_no,) = struct.unpack(LLDPPacket.PORT_ID_STR, port_id)
 
         return src_dpid, src_port_no
 
@@ -223,7 +223,7 @@ class Discovery(app_manager.RyuApp):
 
     # TODO:XXX what's appropriate parameter? adaptive?
     # in seconds
-    DEFAULT_TTL = 120   # unused. ignored.
+    DEFAULT_TTL = 120  # unused. ignored.
     LLDP_SEND_GUARD = .05
     LLDP_SEND_PERIOD_PER_PORT = .9
     TIMEOUT_CHECK_PERIOD = 5.
@@ -268,11 +268,11 @@ class Discovery(app_manager.RyuApp):
                 ofproto = dp.ofproto
                 ofproto_parser = dp.ofproto_parser
                 output = ofproto_parser.OFPActionOutput(
-                    ofproto.OFPP_CONTROLLER, max_len=self.LLDP_PACKET_LEN)
+                    ofproto.OFPP_CONTROLLER, max_len = self.LLDP_PACKET_LEN)
                 actions = [output]
                 dp.send_flow_mod(
-                    rule=rule, cookie=0, command=ofproto.OFPFC_ADD,
-                    idle_timeout=0, hard_timeout=0, actions=actions)
+                    rule = rule, cookie = 0, command = ofproto.OFPFC_ADD,
+                    idle_timeout = 0, hard_timeout = 0, actions = actions, priority = 60000)
 
     def _port_added(self, dp, port):
         port_no = port.port_no
@@ -377,7 +377,7 @@ class Discovery(app_manager.RyuApp):
         if port_data.is_down:
             return
         actions = [dp.ofproto_parser.OFPActionOutput(port_no)]
-        dp.send_packet_out(actions=actions, data=port_data.data)
+        dp.send_packet_out(actions = actions, data = port_data.data)
         # LOG.debug('lldp sent %s %d', dpid_to_str(dp.id), port_no)
 
     def lldp_loop(self):
@@ -406,12 +406,12 @@ class Discovery(app_manager.RyuApp):
                 self.send_lldp_packet(dp, port_no)
             for (dp, port_no) in ports:
                 self.send_lldp_packet(dp, port_no)
-                gevent.sleep(self.LLDP_SEND_GUARD)      # don't burst
+                gevent.sleep(self.LLDP_SEND_GUARD)  # don't burst
 
             if timeout is not None and ports:
-                timeout = 0     # We have already slept
+                timeout = 0  # We have already slept
             # LOG.debug('lldp sleep %s', timeout)
-            self.lldp_event.wait(timeout=timeout)
+            self.lldp_event.wait(timeout = timeout)
 
     def link_loop(self):
         while self.is_active:
@@ -448,5 +448,5 @@ class Discovery(app_manager.RyuApp):
                         self.port_set.move_front(dst_dp, dst.port_no)
                         self.lldp_event.set()
 
-            self.link_event.wait(timeout=self.TIMEOUT_CHECK_PERIOD)
+            self.link_event.wait(timeout = self.TIMEOUT_CHECK_PERIOD)
 
