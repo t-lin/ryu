@@ -43,16 +43,16 @@ LOG = logging.getLogger('ryu.app.arp_handler')
 
 class ArpHandler(app_manager.RyuApp):
     OFP_VERSIONS = [ofproto_v1_0.OFP_VERSION]
-	
+
     _CONTEXTS = {
         'network': network.Network,
-	'mac2port': mac_to_port.MacToPortTable
+        'mac2port': mac_to_port.MacToPortTable
     }
 
     def __init__(self, *args, **kwargs):
         super(ArpHandler, self).__init__(*args, **kwargs)
-	self.mac2port = kwargs['mac2port']
-	self.nw = kwargs['network']
+        self.mac2port = kwargs['mac2port']
+        self.nw = kwargs['network']
         self.mac_to_port = {}
         self.nw.arp_enabled = True;
 
@@ -69,68 +69,46 @@ class ArpHandler(app_manager.RyuApp):
             0, 0, eth_type, 0, 0, 0, 0, 0, 0)
 
         mod = datapath.ofproto_parser.OFPFlowMod(
-            datapath=datapath, match=match, cookie=0,
-            command=ofproto.OFPFC_ADD, idle_timeout=180, hard_timeout=180,
-            priority=ofproto.OFP_DEFAULT_PRIORITY,
-            flags=ofproto.OFPFF_SEND_FLOW_REM, actions=actions)
+            datapath = datapath, match = match, cookie = 0,
+            command = ofproto.OFPFC_ADD, idle_timeout = 180, hard_timeout = 180,
+            priority = ofproto.OFP_DEFAULT_PRIORITY,
+            flags = ofproto.OFPFF_SEND_FLOW_REM, actions = actions)
         datapath.send_msg(mod)
-    
+
     def _drop_packet(self, msg):
         datapath = msg.datapath
-        #LOG.debug("Dropping packet; Dpid: %s; In port: %s",
+        # LOG.debug("Dropping packet; Dpid: %s; In port: %s",
         #            datapath.id, msg.in_port)
         datapath.send_packet_out(msg.buffer_id, msg.in_port, [])
 
-    def _handle_arp_packets(self, msg, dst, src, _eth_type):
+    def _handle_arp_packets(self, msg, dst, src, _eth_type):       
         self.nw.arp_enabled = True;
-	datapath = msg.datapath
-	dpid = datapath.id
-	#print 'yes. received arp packet.'
+    	datapath = msg.datapath
+    	dpid = datapath.id
+	# print 'yes. received arp packet.'
         mydata = ctypes.create_string_buffer(42)
         HTYPE, PTYPE, HLEN, PLEN, OPER, SHA, SPA, THA, TPA = struct.unpack_from('!HHbbH6s4s6s4s', buffer(msg.data), 14)
-        #print 'HTYPE = %d, PTYPE = %d, HLEN = %d, PLEN = %d, OPER = %d, SHA = %s, SPA = %s, THA = %s, TPA = %s' % (
+        # print 'HTYPE = %d, PTYPE = %d, HLEN = %d, PLEN = %d, OPER = %d, SHA = %s, SPA = %s, THA = %s, TPA = %s' % (
         #        HTYPE, PTYPE, HLEN, PLEN, OPER, mac.haddr_to_str(SHA), mac.ipaddr_to_str(SPA), mac.haddr_to_str(THA), mac.ipaddr_to_str(TPA))
+        self._drop_packet(msg)
+        if OPER != 1:
+            return False
         dst_ip = SPA
         dst_mac = SHA
         src_ip = TPA
         LOG.info("arp packet: src = %s, dst = %s", mac.ipaddr_to_str(SPA), mac.ipaddr_to_str(TPA))
 
-        try:
-            port_nw_id = self.nw.get_network(datapath.id, msg.in_port)
-        except PortUnknown:
-            port_nw_id = NW_ID_UNKNOWN
-
-        if (port_nw_id == NW_ID_PXE or port_nw_id == NW_ID_PXE_CTRL
-           or port_nw_id == NW_ID_MGMT or port_nw_id == NW_ID_MGMT_CTRL):
-           #only learn packet for above networks
-           if "0.0.0.0" != mac.ipaddr_to_str(SPA):
-                LOG.info("arp : learing mac-ip association: mac = %s, ip = %s", mac.haddr_to_str(SHA), mac.ipaddr_to_str(SPA))
-                self.mac2port.port_add(datapath, msg.in_port, SHA, SPA)
-
-        #src_mac = self.mac2port.ip_to_mac[datapath.id][TPA]
-	if OPER == 1 and TPA in self.mac2port.ip_to_mac:
-            src_mac = self.mac2port.ip_to_mac[TPA]
-	else:
-	    #print 'IP is not registered'
-            LOG.info("dropped arp request: %s, %s, %s", dpid, msg.in_port, mac.ipaddr_to_str(SPA))
-	    self._drop_packet(msg)
-	    return
-        # learn a mac address to avoid FLOOD next time.
-        #self.mac_to_port[dpid][src] = self.mac2port.mac_to_port[dpid][src]
-        #self.mac2port.mac_to_port[dpid][src] = msg.in_port
-        struct.pack_into('!6s6sHHHbbH6s4s6s4s', mydata, 0, src, src_mac, _eth_type, HTYPE, PTYPE, HLEN, PLEN, 2, src_mac, src_ip, dst_mac, dst_ip)
-        #print '\n\n\n'
-        #HTYPE, PTYPE, HLEN, PLEN, OPER, SHA, SPA, THA, TPA = struct.unpack_from('!HHbbH6s4s6s4s', buffer(mydata), 14)
-        #print 'HTYPE = %d, PTYPE = %d, HLEN = %d, PLEN = %d, OPER = %d, SHA = %s, SPA = %s, THA = %s, TPA = %s' % (
-        #        HTYPE, PTYPE, HLEN, PLEN, OPER, mac.haddr_to_str(SHA), mac.ipaddr_to_str(SPA), mac.haddr_to_str(THA), mac.ipaddr_to_str(TPA))
-        
-        out_port = msg.in_port
-        LOG.info("handled arp packet: %s, %s, %s", dpid, out_port, mac.haddr_to_str(src_mac))
-        out_port = msg.in_port
-        actions = [datapath.ofproto_parser.OFPActionOutput(out_port)]
-        datapath.send_packet_out(actions=actions, data=mydata)
-        self._drop_packet(msg)
-        return
+        src_mac = self.mac2port.mac_ip_get(src_ip)
+        if src_mac is not None:
+            struct.pack_into('!6s6sHHHbbH6s4s6s4s', mydata, 0, src, src_mac, _eth_type, HTYPE, PTYPE, HLEN, PLEN, 2, src_mac, src_ip, dst_mac, dst_ip)
+    
+            out_port = msg.in_port
+            LOG.info("handled arp packet: %s, %s, %s", dpid, out_port, mac.haddr_to_str(src_mac))
+            out_port = msg.in_port
+            actions = [datapath.ofproto_parser.OFPActionOutput(out_port)]
+            datapath.send_packet_out(actions = actions, data = mydata)
+            return True
+        return False
 
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
@@ -138,76 +116,17 @@ class ArpHandler(app_manager.RyuApp):
         msg = ev.msg
         datapath = msg.datapath
         ofproto = datapath.ofproto
-	dpid = datapath.id
+        dpid = datapath.id
 
         dst, src, _eth_type = struct.unpack_from('!6s6sH', buffer(msg.data), 0)
 
-        #br_ex = (datapath.id == 0x80027513556)
-	#LOG.info("packet in %s %s %s %s",
-        #         dpid, haddr_to_str(src), haddr_to_str(dst), msg.in_port)	
-
-        self.mac_to_port.setdefault(dpid, {})
-	
-        broadcast = (dst == mac.BROADCAST) or mac.is_multicast(dst)
-
-	# learn a mac address to avoid FLOOD next time.
-        if src not in self.mac_to_port[dpid]:
-            self.mac_to_port[dpid][src] = msg.in_port
-	#self.mac2port.mac_to_port[dpid][dst] = msg.in_port
-	
-        if  _eth_type != 0x0806:
-            return
-        #if  broadcast:
-        self._handle_arp_packets(msg, dst, src, _eth_type)
-	#else:
-		#LOG.info("broadcast frame, DROP and install flow (RULE) to the switch")
-	#    actions = [] #[datapath.ofproto_parser.OFPActionOutput([])]
-	#    self.add_flow(datapath, msg.in_port, _eth_type, dst, actions)	
-	#    self._drop_packet(msg)
+        if  dst != mac.BROADCAST or _eth_type != 0x0806:
+           return
+        # if  broadcast:
+        # if not br_ex and _eth_type != 0x0806:
+        if self._handle_arp_packets(msg, dst, src, _eth_type) is False:
+            #pass to janus, we donot know waht to do
         return
-           
-        #if not br_ex and _eth_type != 0x0806:
-        if  _eth_type != 0x0806:
-            return
-        if broadcast:
-	    if (_eth_type == 2054): #ARP request
-		self._handle_arp_packets(msg, dst, src, _eth_type)
-		return
-	    else:
-		#LOG.info("broadcast frame, DROP and install flow (RULE) to the switch")
-		actions = [] #[datapath.ofproto_parser.OFPActionOutput([])]
-		self.add_flow(datapath, msg.in_port, _eth_type, dst, actions)	
-	    	self._drop_packet(msg)
-		return
-	elif src != dst:
-	    if (dst in self.mac_to_port[dpid]):
-                out_port = self.mac_to_port[dpid][dst]
-                LOG.info("out_port found %s", out_port)
-	        LOG.info("packet in %s %s %s %s",
-                    dpid, haddr_to_str(src), haddr_to_str(dst), msg.in_port)	
-	    else:
-                #LOG.info("out_port not found")
-                out_port = ofproto.OFPP_FLOOD	
-	else:
-	    self._drop_packet(msg)
-	    return
-	
-        actions = [datapath.ofproto_parser.OFPActionOutput(out_port)]
-
-        if not broadcast and out_port != ofproto.OFPP_FLOOD and out_port == msg.in_port:
-            actions = []
-            self.add_flow(datapath, msg.in_port, _eth_type, dst, actions)	
-	    self._drop_packet(msg)
-	    return
-        # install a flow to avoid packet_in next time
-        if broadcast or (out_port != ofproto.OFPP_FLOOD):
-            LOG.info("install flow: out_port %s ", out_port)
-            self.add_flow(datapath, msg.in_port, _eth_type, dst, actions)
-
-        out = datapath.ofproto_parser.OFPPacketOut(
-            datapath=datapath, buffer_id=msg.buffer_id, in_port=msg.in_port,
-            actions=actions)
-        datapath.send_msg(out)
 
     @set_ev_cls(ofp_event.EventOFPPortStatus, MAIN_DISPATCHER)
     def _port_status_handler(self, ev):
@@ -215,7 +134,7 @@ class ArpHandler(app_manager.RyuApp):
         reason = msg.reason
         port_no = msg.desc.port_no
 
-        #if msg.datapath.id != 0x80027513556:
+        # if msg.datapath.id != 0x80027513556:
         #    return
 
         ofproto = msg.datapath.ofproto

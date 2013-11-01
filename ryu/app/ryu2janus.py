@@ -20,6 +20,8 @@ import struct
 import httplib
 import json
 import gflags
+import ctypes
+import gevent
 
 from ryu.base import app_manager
 from ryu.controller import mac_to_port
@@ -27,6 +29,8 @@ from ryu.controller import ofp_event
 from ryu.controller.handler import MAIN_DISPATCHER, CONFIG_DISPATCHER
 from ryu.controller.handler import set_ev_cls
 from ryu.controller import dpset
+from ryu.controller import flow_store
+
 from ryu.ofproto import ofproto_v1_0
 from ryu.lib.mac import haddr_to_str, ipaddr_to_str, is_multicast
 from ryu.lib.lldp import ETH_TYPE_LLDP, LLDP_MAC_NEAREST_BRIDGE
@@ -50,18 +54,35 @@ OFP_DEFAULT_PRIORITY = 0x8000
 
 class Ryu2JanusForwarding(app_manager.RyuApp):
     OFP_VERSIONS = [ofproto_v1_0.OFP_VERSION]
+    _CONTEXTS = {
+        'dpset': dpset.DPSet,
+        'flow_store': flow_store.FlowStore,
+        'mac2port': mac_to_port.MacToPortTable,
+    }
 
     def __init__(self, *args, **kwargs):
         super(Ryu2JanusForwarding, self).__init__(*args, **kwargs)
-        self.mac_to_port = {}
+        self.mac2port = kwargs['mac2port']
+        self.dpset = kwargs['dpset']
 
         # Janus address
         self._conn = None
         self.host = FLAGS.janus_host
         self.port = FLAGS.janus_port
         self.url_prefix = '/v1.0/events/0'
+        self.flow_store = kwargs['flow_store']
+        self.is_active = True
+        self.threads = []
+        self.threads.append(gevent.spawn_later(0, self.cleaning_loop))
 
-    def _install_modflow(self, msg, in_port, src, dst = None, actions = None, priority = OFP_DEFAULT_PRIORITY):
+    def close(self):
+        self.is_active = False
+        # gevent.killall(self.threads)
+        gevent.joinall(self.threads)
+
+    def _install_modflow(self, msg, in_port, src, dst = None, eth_type = None, actions = None,
+                         priority = OFP_DEFAULT_PRIORITY,
+                         idle_timeout = 0, hard_timeout = 0):
         datapath = msg.datapath
         ofproto = datapath.ofproto
         if LOG.getEffectiveLevel() == logging.DEBUG:
@@ -83,19 +104,22 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
             rule.set_dl_dst(dst)
         if src is not None:
             rule.set_dl_src(src)
+        if eth_type is not None:
+            rule.set_dl_type(eth_type)
+
         datapath.send_flow_mod(
             rule = rule, cookie = 0, command = datapath.ofproto.OFPFC_ADD,
-            idle_timeout = 0, hard_timeout = 0,
+            idle_timeout = idle_timeout, hard_timeout = hard_timeout,
             priority = priority,
             buffer_id = 0xffffffff, out_port = ofproto.OFPP_NONE,
             flags = ofproto.OFPFF_SEND_FLOW_REM, actions = actions)
 
-    def _modflow_and_drop_packet(self, msg, in_port, src, dst, priority = OFP_DEFAULT_PRIORITY):
+    def _modflow_and_drop_packet(self, msg, src, dst, priority = OFP_DEFAULT_PRIORITY):
         LOG.info("installing flow for dropping packet")
         datapath = msg.datapath
         in_port = msg.in_port
 
-        self._install_modflow(msg, in_port, src, dst, [], priority)
+        self._install_modflow(msg, in_port, src, dst, actions = [], priority = priority)
         datapath.send_packet_out(msg.buffer_id, in_port, [])
 
     def _forward2Controller(self, method, url, body = None, headers = None):
@@ -132,10 +156,12 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
 
         ofproto = msg.datapath.ofproto
         if reason == ofproto.OFPPR_ADD:
+            self.flow_store.del_port(msg.datapath.id, port_no)
             LOG.info("port added %s", port_no)
             reason_id = JANPORTREASONS.JAN_PORT_ADD
             method = 'POST'
         elif reason == ofproto.OFPPR_DELETE:
+            self.flow_store.del_port(msg.datapath.id, port_no)
             LOG.info("port deleted %s", port_no)
             reason_id = JANPORTREASONS.JAN_PORT_DELETE
             method = 'PUT'  # 'DELETE' doesn't support a body in the request
@@ -158,6 +184,16 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
         LOG.info("FORWARDING PORT STATUS TO JANUS: body = %s", body)
         self._forward2Controller(method, url, body, header)
 
+    def _packet_not_dhcp_request(self, dl_dst, eth_type, data):
+        if dl_dst == mac.BROADCAST and eth_type == 0x800:
+            dummy1, ip_proto, dummy2, src_ip, dst_ip = struct.unpack_from('!BBHLL', buffer(data), 22)
+            if ip_proto == inet.IPPROTO_UDP:
+                tp_sport, tp_dport = struct.unpack_from('!HH', buffer(data), 34)
+                if tp_sport == 68:
+                    LOG.info("dhcp packet detected")
+                    return False
+
+        return True
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):
@@ -177,7 +213,7 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
 
         if dl_dst != mac.BROADCAST and is_multicast(dl_dst):
             # drop and install rule to drop
-            self._modflow_and_drop_packet(msg, None, None, dl_dst, priority = OFP_DEFAULT_PRIORITY + 25000)
+            self._modflow_and_drop_packet(msg, None, dl_dst, OFP_DEFAULT_PRIORITY + 25000)
             return
 
         contents.set_in_port(msg.in_port)
@@ -185,8 +221,15 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
         contents.set_dl_src(haddr_to_str(dl_src))
         contents.set_eth_type(_eth_type)
 
-        if _eth_type == 0x806:  # ARP
+        if _eth_type == 0x806 and dl_dst == mac.BROADCAST:  # ARP, broadcast
             HTYPE, PTYPE, HLEN, PLEN, OPER, SHA, SPA, THA, TPA = struct.unpack_from('!HHbbH6s4s6s4s', buffer(msg.data), 14)
+            if self._handle_arp_packets(msg, dl_dst, dl_src, _eth_type,
+                                        HTYPE, PTYPE, HLEN, PLEN,
+                                        OPER, SHA, SPA, THA, TPA):
+                return
+
+            self._drop_packet(msg)
+
             contents.set_arp_htype(HTYPE)
             contents.set_arp_ptype(PTYPE)
             contents.set_arp_hlen(HLEN)
@@ -198,15 +241,53 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
             contents.set_arp_tha(haddr_to_str(THA))
             contents.set_arp_tpa(ipaddr_to_str(TPA))
 
+            method = 'POST'
+            body = {'of_event_id': JANEVENTS.JAN_EV_PACKETIN}
+            body.update(contents.getContents())
+            body = json.dumps({'event': body})
+            header = {"Content-Type": "application/json"}
+
+            url = self.url_prefix
+            LOG.info("FORWARDING PACKET TO JANUS: body = %s", body)
+            self._forward2Controller(method, url, body, header)
+            return
+
+        if self._packet_not_dhcp_request(dl_dst, _eth_type, msg.data):
+            (pr, eth_t, acts, out_ports,
+                idle_timeout, hard_timeout,
+                with_src) = self.flow_store.get_flow(
+                                           datapath.id, msg.in_port,
+                                            haddr_to_str(dl_src), haddr_to_str(dl_dst),
+                                            _eth_type)
+            if pr is not None and acts is not None:
+                actions = ofctl_v1_0.to_actions(datapath, acts)
+                if with_src == 0:
+                    temp_src = None
+                else:
+                    temp_src = dl_src
+                self._install_modflow(msg, msg.in_port, temp_src, dl_dst, eth_t, actions, pr, idle_timeout, hard_timeout)
+                datapath.send_packet_out(int(msg.buffer_id), int(msg.in_port), actions = actions, data = None)
+                return
+            else:
+                ret = self.flow_store.check_if_similar_msg_pending(int(msg.buffer_id), datapath.id, msg.in_port, haddr_to_str(dl_src), haddr_to_str(dl_dst), _eth_type)
+                if ret is True:
+                    if self.flow_store.add_msg_to_pending(int(msg.buffer_id), datapath.id, msg.in_port, haddr_to_str(dl_src), haddr_to_str(dl_dst), _eth_type) is False:
+                        self._drop_packet(msg)
+                    return
+                else:
+                    self.flow_store.add_msg_to_pending(int(msg.buffer_id), datapath.id, msg.in_port, haddr_to_str(dl_src), haddr_to_str(dl_dst), _eth_type)
+
         if _eth_type == 0x800:
 #            print msg.data.encode( 'hex' )
 #            print repr( msg.data )
 #            print buffer( msg.data )
 
             dummy1, ip_proto, dummy2, src_ip, dst_ip = struct.unpack_from('!BBHLL', buffer(msg.data), 22)
+            """
             print '**********************'
             print dummy1, ip_proto, dummy2, src_ip , dst_ip
             print '**********************'
+            """
             contents.set_nw_proto(ip_proto)
             contents.set_nw_src(src_ip)
             contents.set_nw_dest(dst_ip)
@@ -222,7 +303,7 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
         header = {"Content-Type": "application/json"}
 
         url = self.url_prefix
-        LOG.info("FORWARDING PACKET TO JANUS: body = %s", body)
+        # LOG.info("FORWARDING PACKET TO JANUS: body = %s", body)
         self._forward2Controller(method, url, body, header)
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
@@ -326,3 +407,56 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
         url = self.url_prefix
         LOG.info("FORWARDING DP EVENT TO JANUS: body = %s", body)
         self._forward2Controller(method, url, body, header)
+
+    def _handle_arp_packets(self, msg, dst, src, _eth_type, HTYPE, PTYPE, HLEN, PLEN,
+                                        OPER, SHA, SPA, THA, TPA):
+        datapath = msg.datapath
+        dpid = datapath.id
+    # print 'yes. received arp packet.'
+        # print 'HTYPE = %d, PTYPE = %d, HLEN = %d, PLEN = %d, OPER = %d, SHA = %s, SPA = %s, THA = %s, TPA = %s' % (
+        #        HTYPE, PTYPE, HLEN, PLEN, OPER, mac.haddr_to_str(SHA), mac.ipaddr_to_str(SPA), mac.haddr_to_str(THA), mac.ipaddr_to_str(TPA))
+        if OPER != 1:
+            self._drop_packet(msg)
+            return True
+        dst_ip = SPA
+        dst_mac = SHA
+        src_ip = TPA
+        LOG.info("arp packet: src = %s, dst = %s", mac.ipaddr_to_str(SPA), mac.ipaddr_to_str(TPA))
+
+        src_mac = self.mac2port.mac_ip_get(src_ip)
+        if src_mac is not None:
+            self._drop_packet(msg)
+            mydata = ctypes.create_string_buffer(42)
+            struct.pack_into('!6s6sHHHbbH6s4s6s4s', mydata, 0, src, src_mac, _eth_type, HTYPE, PTYPE, HLEN, PLEN, 2, src_mac, src_ip, dst_mac, dst_ip)
+
+            out_port = msg.in_port
+            LOG.info("handled arp packet: %s, %s, %s, %s requested by %s, %s", dpid, out_port, mac.haddr_to_str(src_mac), mac.ipaddr_to_str(src_ip),
+                     mac.haddr_to_str(src), mac.ipaddr_to_str(dst_ip))
+            out_port = msg.in_port
+            actions = [datapath.ofproto_parser.OFPActionOutput(out_port)]
+            datapath.send_packet_out(actions = actions, data = mydata)
+            return True
+        return False
+
+    def _drop_packet(self, msg):
+        datapath = msg.datapath
+        datapath.send_packet_out(msg.buffer_id, msg.in_port, [])
+
+    def cleaning_loop(self):
+        while self.is_active:
+            try:
+                gevent.sleep(seconds = 15)
+#                LOG.info("clearing expired pending msgs")
+                expired_list = self.flow_store.clear_expired_pending_msgs()
+                if len(expired_list) > 0:
+                    LOG.info("clearing expired pending msgs %s", expired_list)
+                for (dpid, in_port, id)  in expired_list:
+                    try:
+                        datapath = self.dpset.get(dpid)
+                        datapath.send_packet_out(id, in_port, [])
+                    except:
+                        pass
+            except:
+                pass
+
+

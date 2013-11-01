@@ -68,7 +68,7 @@ class WSGIApplication(object):
         # LOG.debug('mapper %s', self.mapper)
         # LOG.debug('req: %s\n', req)
         # LOG.debug('\nreq.environ: %s', req.environ)
-        match = self.mapper.match(environ=req.environ)
+        match = self.mapper.match(environ = req.environ)
 
         if not match:
             return webob.exc.HTTPNotFound()
@@ -97,6 +97,6 @@ class WSGIServer(pywsgi.WSGIServer):
 def start_service(app_mgr):
     for instance in app_mgr.contexts.values():
         if instance.__class__ == WSGIApplication:
-            return WSGIServer(instance)
+            return WSGIServer(instance, log = None)
 
     return None

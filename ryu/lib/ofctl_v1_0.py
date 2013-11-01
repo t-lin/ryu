@@ -25,7 +25,7 @@ from ryu.lib.dpid import dpid_to_str
 
 LOG = logging.getLogger('ryu.lib.ofctl_v1_0')
 
-DEFAULT_TIMEOUT = 1.0   # TODO:XXX
+DEFAULT_TIMEOUT = 1.0  # TODO:XXX
 
 
 def to_actions(dp, acts):
@@ -129,7 +129,7 @@ def to_match(dp, attrs):
                 mask = int(ip[1])
                 assert 0 < mask <= 32
             v = (32 - mask) << ofp.OFPFW_NW_SRC_SHIFT | \
-                ~ofp.OFPFW_NW_SRC_MASK
+                ~ ofp.OFPFW_NW_SRC_MASK
             wildcards &= v
         elif key == 'nw_dst':
             ip = value.split('/')
@@ -139,7 +139,7 @@ def to_match(dp, attrs):
                 mask = int(ip[1])
                 assert 0 < mask <= 32
             v = (32 - mask) << ofp.OFPFW_NW_DST_SHIFT | \
-                ~ofp.OFPFW_NW_DST_MASK
+                ~ ofp.OFPFW_NW_DST_MASK
             wildcards &= v
         elif key == 'tp_src':
             tp_src = int(value)
@@ -175,12 +175,12 @@ def send_stats_request(dp, stats, waiters, msgs):
     dp.set_xid(stats)
     waiters = waiters.setdefault(dp.id, {})
     lock = gevent.event.AsyncResult()
-    print 'Stats %s', str(stats.xid)
+#    print 'Stats %s', str(stats.xid)
     waiters[stats.xid] = (lock, msgs)
     dp.send_msg(stats)
 
     try:
-        lock.get(timeout=DEFAULT_TIMEOUT)
+        lock.get(timeout = DEFAULT_TIMEOUT)
     except gevent.Timeout:
         del waiters[dp.id][stats.xid]
 
@@ -273,10 +273,10 @@ def mod_flow_entry(dp, flow, cmd):
     out_port = int(flow.get('out_port', ofproto_v1_0.OFPP_NONE))
 
     flow_mod = dp.ofproto_parser.OFPFlowMod(
-        datapath=dp, match=match, cookie=cookie,
-        command=cmd, idle_timeout=idle_timeout,
-        hard_timeout=hard_timeout, priority=priority,
-        out_port=out_port, flags=flags, actions=actions)
+        datapath = dp, match = match, cookie = cookie,
+        command = cmd, idle_timeout = idle_timeout,
+        hard_timeout = hard_timeout, priority = priority,
+        out_port = out_port, flags = flags, actions = actions)
 
     dp.send_msg(flow_mod)
 
@@ -286,8 +286,8 @@ def delete_flow_entry(dp):
         dp.ofproto.OFPFW_ALL, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
 
     flow_mod = dp.ofproto_parser.OFPFlowMod(
-        datapath=dp, match=match, cookie=0,
-        command=dp.ofproto.OFPFC_DELETE)
+        datapath = dp, match = match, cookie = 0,
+        command = dp.ofproto.OFPFC_DELETE)
 
     dp.send_msg(flow_mod)
 
@@ -299,7 +299,7 @@ def send_features_request(dp, features, waiters, msgs):
     dp.send_msg(features)
 
     try:
-        lock.get(timeout=DEFAULT_TIMEOUT)
+        lock.get(timeout = DEFAULT_TIMEOUT)
     except gevent.Timeout:
         del waiters[dp.id][features.xid]
 
