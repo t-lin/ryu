@@ -29,6 +29,7 @@ from ryu.controller import dpset
 from ryu.controller.handler import MAIN_DISPATCHER
 from ryu.controller.handler import set_ev_cls
 from ryu.controller import flow_store
+from ryu.controller import api_db
 from ryu.controller import mac_to_port
 from ryu.ofproto import ofproto_v1_0
 from ryu.lib import ofctl_v1_0
@@ -72,8 +73,10 @@ class StatsController(ControllerBase):
         self.waiters = data['waiters']
         self.flow_store = data.get('flow_store', None)
         self.mac2port = data.get('mac2port', None)
+        self.api_db = data.get('api_db', None)
         assert self.mac2port is not None
         assert self.flow_store is not None
+        assert self.api_db is not None
 
     def get_dpids(self, req, **_kwargs):
         dps = self.dpset.dps.keys()
@@ -187,7 +190,7 @@ class StatsController(ControllerBase):
         if dp.ofproto.OFP_VERSION == ofproto_v1_0.OFP_VERSION:
             if cmd == 'add':
                 cmd = dp.ofproto.OFPFC_ADD
-                self.flow_store.add_flow_dict(flow)
+                self.flow_store.add_flow_dict(flow, self.api_db)
             elif cmd == 'modify':
                 cmd = dp.ofproto.OFPFC_MODIFY
             elif cmd == 'delete':
@@ -236,6 +239,7 @@ class PacketController(ControllerBase):
             output_dict = eval(req.body)
             out_port_list = output_dict.get('out_port_list')
             mydata = output_dict.get('data')
+            acts = output_dict.get('actions', None)
             assert type(output_dict) is dict
             # TODO: put assert for mydata, but sometimes data might be Null
             # assert type(mydata) is str
@@ -248,9 +252,12 @@ class PacketController(ControllerBase):
         assert datapath is not None
         ofproto = datapath.ofproto
 
-        actions = []
-        for out_port in out_port_list:
-            actions.append(datapath.ofproto_parser.OFPActionOutput(int(out_port)))
+        if acts is not None:
+            actions = ofctl_v1_0.to_actions(datapath, acts)
+        else:
+            actions = []
+            for out_port in out_port_list:
+                actions.append(datapath.ofproto_parser.OFPActionOutput(int(out_port)))
 
         if mydata is not None:
             mydata = eval(mydata)
@@ -311,7 +318,8 @@ class RestStatsApi(app_manager.RyuApp):
         'dpset': dpset.DPSet,
         'wsgi': WSGIApplication,
         'flow_store': flow_store.FlowStore,
-        'mac2port': mac_to_port.MacToPortTable
+        'mac2port': mac_to_port.MacToPortTable,
+        'api_db': api_db.API_DB
     }
 
     def __init__(self, *args, **kwargs):
@@ -319,6 +327,7 @@ class RestStatsApi(app_manager.RyuApp):
         self.dpset = kwargs['dpset']
         self.flow_store = kwargs['flow_store']
         self.mac2port = kwargs['mac2port']
+        self.api_db = kwargs['api_db']
         wsgi = kwargs['wsgi']
         self.waiters = {}
         self.data = {}
@@ -326,6 +335,7 @@ class RestStatsApi(app_manager.RyuApp):
         self.data['waiters'] = self.waiters
         self.data['flow_store'] = self.flow_store
         self.data['mac2port'] = self.mac2port
+        self.data['api_db'] = self.api_db
         mapper = wsgi.mapper
 
         wsgi.registory['StatsController'] = self.data

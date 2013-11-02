@@ -30,7 +30,7 @@ from ryu.controller.handler import MAIN_DISPATCHER, CONFIG_DISPATCHER
 from ryu.controller.handler import set_ev_cls
 from ryu.controller import dpset
 from ryu.controller import flow_store
-
+from ryu.controller import api_db
 from ryu.ofproto import ofproto_v1_0
 from ryu.lib.mac import haddr_to_str, ipaddr_to_str, is_multicast
 from ryu.lib.lldp import ETH_TYPE_LLDP, LLDP_MAC_NEAREST_BRIDGE
@@ -39,6 +39,7 @@ from janus.network.of_controller.event_contents import EventContents
 from dpkt.ntp import BROADCAST
 from ryu.ofproto import nx_match, inet
 from ryu.lib import mac, ofctl_v1_0
+from netaddr import IPAddress
 
 FLAGS = gflags.FLAGS
 gflags.DEFINE_string('janus_host', '127.0.0.1', 'Janus host IP address')
@@ -57,6 +58,7 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
     _CONTEXTS = {
         'dpset': dpset.DPSet,
         'flow_store': flow_store.FlowStore,
+        'api_db': api_db.API_DB,
         'mac2port': mac_to_port.MacToPortTable,
     }
 
@@ -64,6 +66,7 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
         super(Ryu2JanusForwarding, self).__init__(*args, **kwargs)
         self.mac2port = kwargs['mac2port']
         self.dpset = kwargs['dpset']
+        self.api_db = kwargs.get('api_db', None)
 
         # Janus address
         self._conn = None
@@ -184,16 +187,57 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
         LOG.info("FORWARDING PORT STATUS TO JANUS: body = %s", body)
         self._forward2Controller(method, url, body, header)
 
-    def _packet_not_dhcp_request(self, dl_dst, eth_type, data):
+    def _packet_not_dhcp_request(self, dp, dpid, in_port, buffer_id, dl_dst, dl_src, eth_type, data):
         if dl_dst == mac.BROADCAST and eth_type == 0x800:
             dummy1, ip_proto, dummy2, src_ip, dst_ip = struct.unpack_from('!BBHLL', buffer(data), 22)
             if ip_proto == inet.IPPROTO_UDP:
                 tp_sport, tp_dport = struct.unpack_from('!HH', buffer(data), 34)
                 if tp_sport == 68:
-                    LOG.info("dhcp packet detected")
-                    return False
+                    actions = self.flow_store.get_dhcp_flow(dpid, in_port, haddr_to_str(dl_src))
+                    if actions is not None:
+                        LOG.info("dhcp packet handled (%s, %s), (%s), %s -> %s", hex(dpid), in_port,
+                                 haddr_to_str(dl_src), str(IPAddress(src_ip)), str(IPAddress(dst_ip)))
+                        flow = {}
+                        flow['in_port'] = in_port
+                        flow['dl_dst'] = 'ff:ff:ff:ff:ff:ff'
+#                        flow['dl_src'] = haddr_to_str(dl_src)
+                        flow['dl_type'] = OFI_ETH_TYPE_IP
+                        flow['nw_proto'] = inet.IPPROTO_UDP
+#                        flow['nw_dst'] = "0.0.0.0/32"
+                        flow['tp_src'] = BOOTP_CLIENT_PORT_PORT_NUMBER
+                        match = ofctl_v1_0.to_match(dp, flow)
+                        priority = OFP_DEFAULT_PRIORITY + 30000
+                        acts = ofctl_v1_0.to_actions(dp, actions)
+                        out_port = int(flow.get('out_port', ofproto_v1_0.OFPP_NONE))
+                        flow_mod = dp.ofproto_parser.OFPFlowMod(
+                            datapath = dp, match = match, cookie = 0,
+                            command = dp.ofproto.OFPFC_ADD, idle_timeout = 0,
+                            hard_timeout = 0, priority = priority,
+                            flags = 0, actions = acts, out_port = out_port)
 
-        return True
+                        dp.send_msg(flow_mod)
+                        dp.send_packet_out(buffer_id, in_port, actions = acts)
+                        """
+                        flow = {}
+                        flow['dpid'] = dpid
+                        flow['dl_dst'] = BROADCAST
+                        flow['in_port'] = in_port
+                        flow['dl_type'] = OFI_ETH_TYPE_IP
+                        flow['nw_proto'] = OFI_UDP
+                        flow['tp_src'] = BOOTP_CLIENT_PORT_PORT_NUMBER
+                        flow['nw_dst'] = 0
+                        flow['priority'] = OFP_DEFAULT_PRIORITY + 30000
+                        flow['idle_timeout'] = 0
+                        flow['hard_timeout'] = 0
+                        flow['actions'] = actions
+                        ofctl_v1_0.mod_flow_entry(dp, flow, dp.ofproto.OFPFC_ADD)
+                        dp.send_packet_out(buffer_id, in_port, actions = actions)
+                        """
+                        return 2
+                    LOG.info("dhcp packet detected (%s, %s), (%s), %s -> %s", hex(dpid), in_port,
+                             haddr_to_str(dl_src), str(IPAddress(src_ip)), str(IPAddress(dst_ip)))
+                    return 0
+        return 1
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):
@@ -252,8 +296,9 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
             self._forward2Controller(method, url, body, header)
             return
 
-        if self._packet_not_dhcp_request(dl_dst, _eth_type, msg.data):
-            (pr, eth_t, acts, out_ports,
+        r1 = self._packet_not_dhcp_request(datapath, datapath.id, int(msg.in_port), int(msg.buffer_id), dl_dst, dl_src, _eth_type, msg.data)
+        if r1 == 1:
+            (id, pr, eth_t, acts, out_ports,
                 idle_timeout, hard_timeout,
                 with_src) = self.flow_store.get_flow(
                                            datapath.id, msg.in_port,
@@ -276,6 +321,10 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
                     return
                 else:
                     self.flow_store.add_msg_to_pending(int(msg.buffer_id), datapath.id, msg.in_port, haddr_to_str(dl_src), haddr_to_str(dl_dst), _eth_type)
+        elif r1 == 2:
+            # means already taken care of
+            return
+
 
         if _eth_type == 0x800:
 #            print msg.data.encode( 'hex' )
@@ -327,7 +376,7 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
         dp = ev.dp
 
         if ev.enter_leave:
-
+            self.api_db.load_flows(str(hex(dp.id)), self.flow_store)
             # send any dhcp discovery message up to the controller
             """
             rule = nx_match.ClsRule()

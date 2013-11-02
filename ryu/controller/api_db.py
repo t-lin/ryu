@@ -18,6 +18,7 @@
 import logging
 import gflags
 import migrate.changeset
+import json
 
 from ryu.exception import NetworkNotFound, NetworkAlreadyExist
 from ryu.exception import PortAlreadyExist, PortNotFound
@@ -30,11 +31,14 @@ from sqlalchemy import create_engine, MetaData
 from sqlalchemy import Table, Column, Integer, String
 from sqlalchemy import and_
 import sqlalchemy.exc as sqlexc
+from datetime import datetime
+from sqlalchemy import MetaData, Table, Column, Integer, DateTime, Boolean, String
+from sqlalchemy import *
 
 LOG = logging.getLogger('ryu.controller.api_db')
 
 FLAGS = gflags.FLAGS
-gflags.DEFINE_string('api_db_url', 'mysql://root:iheartdatabases@'+ \
+gflags.DEFINE_string('api_db_url', 'mysql://root:iheartdatabases@' + \
                         'localhost/ryu?charset=utf8', 'Ryu Database URL')
 
 # Save API calls that may affect the state of the controller
@@ -42,19 +46,40 @@ gflags.DEFINE_string('api_db_url', 'mysql://root:iheartdatabases@'+ \
 class API_DB(object):
     def __init__(self):
         # Create any tables that don't already exist
-        self.createTables()
+#        self.createTables()
 
-        self.db = SqlSoup(FLAGS.api_db_url)
-        self.db_nets = self.db.networks
-        self.db_ports = self.db.ports
-        self.db_macs = self.db.macs
-        self.db_bonds = self.db.bonds
-        self.db_flowspace = self.db.flowspace
-        self.db_net2slice = self.db.delegated_nets
+#        self.db = SqlSoup(FLAGS.api_db_url)
+
+        self.db = create_engine('mysql://root:supersecret@localhost/janus?charset=utf8')
+        self.db.echo = False
+        meta = MetaData()
+
+        self.db_flows = Table('flows', meta,
+                        Column('id', Integer, primary_key = True, autoincrement = True),
+                        Column('datapath_id', String(50), default = ''),
+                        Column('in_port', Integer, default = -1),
+                        Column('dst', String(20), default = ''),
+                        Column('src', String(20), default = ''),
+                        Column('eth_type', Integer, default = -1),
+                        Column('priority', Integer, default = -1),
+                        Column('idle_timeout', Integer, default = -1),
+                        Column('hard_timeout', Integer, default = -1),
+                        Column('actions', String(255), default = ''),
+                        Column('out_port', Integer, default = -1),
+                        Column('created_at', DateTime , default = datetime.now()),
+                        Column('deleted_at', DateTime),
+                        Column('deleted', Boolean, default = False))
+        meta.bind = self.db
+
+        # self.db_ports = self.db.ports
+        # self.db_macs = self.db.macs
+        # self.db_bonds = self.db.bonds
+        # self.db_flowspace = self.db.flowspace
+        # self.db_net2slice = self.db.delegated_nets
 
     def createTables(self):
         engine = create_engine(FLAGS.api_db_url)
-        data = MetaData(bind=engine)
+        data = MetaData(bind = engine)
         data.reflect()
         existing_tables = data.tables.keys()
 
@@ -62,33 +87,33 @@ class API_DB(object):
         # Format: {Table object /w primary Column: [list of extra Column objects]}
         db_schema = {
             Table('networks', data,
-                    Column('network_id', String(255), primary_key=True), keep_existing=True) :
+                    Column('network_id', String(255), primary_key = True), keep_existing = True) :
                 [],
 
             Table('ports', data,
-                    Column('id', Integer, primary_key=True, autoincrement=True), keep_existing=True) :
+                    Column('id', Integer, primary_key = True, autoincrement = True), keep_existing = True) :
                 [   Column('port_num', Integer),
                     Column('datapath_id', String(255)),
                     Column('network_id', String(255)),
                     Column('bond_id', String(255))  ],
 
             Table('macs', data,
-                    Column('mac_address', String(255), primary_key=True), keep_existing=True) :
+                    Column('mac_address', String(255), primary_key = True), keep_existing = True) :
                 [   Column('network_id', String(255))   ],
 
             Table('bonds', data,
-                    Column('bond_id', String(255), primary_key=True), keep_existing=True) :
+                    Column('bond_id', String(255), primary_key = True), keep_existing = True) :
                 [   Column('datapath_id', String(255)),
                     Column('network_id', String(255))   ],
 
             Table('flowspace', data,
-                    Column('id', Integer, primary_key=True), keep_existing=True) :
+                    Column('id', Integer, primary_key = True), keep_existing = True) :
                 [   Column('datapath_id', String(255)),
                     Column('port_num', Integer),
                     Column('mac_address', String(255))  ],
 
             Table('delegated_nets', data,
-                    Column('network_id', String(255), primary_key=True), keep_existing=True) :
+                    Column('network_id', String(255), primary_key = True), keep_existing = True) :
                 [   Column('slice', String(255))    ],
         }
 
@@ -100,7 +125,7 @@ class API_DB(object):
             # Check columns and update if necessary
             for col in colList:
                 if col.name not in tab.c.keys():
-                    col.create(tab, populate_default=True)
+                    col.create(tab, populate_default = True)
 
     def checkConnection(self):
         try:
@@ -171,13 +196,13 @@ class API_DB(object):
     ###########################################################################
     # Functions for storing API calls into the database
     ###########################################################################
-    def createNetwork(self, network_id, update=False):
+    def createNetwork(self, network_id, update = False):
         self.checkConnection()
         if not self.db_nets.get(network_id):
-            self.db_nets.insert(network_id=network_id)
+            self.db_nets.insert(network_id = network_id)
         else:
             if not update:
-                raise NetworkAlreadyExist(network_id=network_id)
+                raise NetworkAlreadyExist(network_id = network_id)
 
         self.db.commit()
 
@@ -190,7 +215,7 @@ class API_DB(object):
         if entry:
             self.db.delete(entry)
         else:
-            raise NetworkNotFound(network_id=network_id)
+            raise NetworkNotFound(network_id = network_id)
 
         self.db.commit()
 
@@ -199,7 +224,7 @@ class API_DB(object):
         entry = self.db_macs.get(mac)
         # Check for existing entry
         if not entry:
-            self.db_macs.insert(network_id=network_id, mac_address=mac)
+            self.db_macs.insert(network_id = network_id, mac_address = mac)
         else:
             if entry.network_id == network_id or network_id == NW_ID_EXTERNAL:
                 # If old network and new network the same, do nothing
@@ -209,7 +234,7 @@ class API_DB(object):
                 # Allow changing from NW_ID_EXTERNAL to a known network UUID
                 entry.network_id = network_id
             else:
-                raise MacAddressDuplicated(mac=mac)
+                raise MacAddressDuplicated(mac = mac)
 
         try:
             self.db.commit()
@@ -224,30 +249,30 @@ class API_DB(object):
         if entry:
             self.db.delete(entry)
         else:
-            raise MacAddressNotFound(mac=mac)
+            raise MacAddressNotFound(mac = mac)
 
         self.db.commit()
 
-    def createPort(self, network_id, dpid, port_num, update=False):
+    def createPort(self, network_id, dpid, port_num, update = False):
         self.checkConnection()
         # Check for existing entry
         dpid = dpid.lstrip('0')
-        params = and_(self.db_ports.datapath_id==dpid,
-                        self.db_ports.port_num==port_num)
+        params = and_(self.db_ports.datapath_id == dpid,
+                        self.db_ports.port_num == port_num)
         old_entry = self.db_ports.filter(params).first()
 
         if not old_entry:
             # If updating but didn't locate existing entry, raise exception?
             # For now, just insert the entry and return success
-            self.db_ports.insert(network_id=network_id,
-                                    datapath_id=dpid, port_num=port_num)
+            self.db_ports.insert(network_id = network_id,
+                                    datapath_id = dpid, port_num = port_num)
         else:
             if update:
                 old_entry.network_id = network_id
             else:
                 # Entry already exists for (dpid,port) <=> network
-                raise PortAlreadyExist(network_id=network_id,
-                                        dpid=dpid, port=port_num)
+                raise PortAlreadyExist(network_id = network_id,
+                                        dpid = dpid, port = port_num)
 
         self.db.commit()
 
@@ -257,15 +282,15 @@ class API_DB(object):
     def deletePort(self, network_id, dpid, port_num):
         self.checkConnection()
         dpid = dpid.lstrip('0')
-        params = and_(self.db_ports.datapath_id==dpid,
-                        self.db_ports.port_num==port_num)
+        params = and_(self.db_ports.datapath_id == dpid,
+                        self.db_ports.port_num == port_num)
         entry = self.db_ports.filter(params).first()
 
         if entry:
             self.db.delete(entry)
         else:
-            raise PortNotFound(network_id=network_id,
-                                dpid=dpid, port=port_num)
+            raise PortNotFound(network_id = network_id,
+                                dpid = dpid, port = port_num)
 
         self.db.commit()
 
@@ -274,9 +299,9 @@ class API_DB(object):
         # Check for existing entry
         dpid = dpid.lstrip('0')
         if not self.db_bonds.get(bond_id):
-            self.db_bonds.insert(bond_id=bond_id, datapath_id=dpid, network_id=network_id)
+            self.db_bonds.insert(bond_id = bond_id, datapath_id = dpid, network_id = network_id)
         else:
-            raise BondAlreadyExist(bond_id=bond_id)
+            raise BondAlreadyExist(bond_id = bond_id)
 
         self.db.commit()
 
@@ -304,11 +329,11 @@ class API_DB(object):
             dpid = bondEntry.datapath_id
             network_id = bondEntry.network_id
         else:
-            raise BondNotFound(bond_id=bond_id)
+            raise BondNotFound(bond_id = bond_id)
 
-        params = and_(self.db_ports.datapath_id==dpid,
-                        self.db_ports.network_id==network_id,
-                        self.db_ports.port_num==port_num)
+        params = and_(self.db_ports.datapath_id == dpid,
+                        self.db_ports.network_id == network_id,
+                        self.db_ports.port_num == port_num)
         entry = self.db_ports.filter(params).first()
 
         if entry:
@@ -317,10 +342,10 @@ class API_DB(object):
             if not old_bond_id:
                 entry.bond_id = bond_id
             else:
-                raise BondPortAlreadyBonded(port=port_num, bond_id=old_bond_id)
+                raise BondPortAlreadyBonded(port = port_num, bond_id = old_bond_id)
         else:
-            raise PortNotFound(network_id=network_id,
-                                dpid=dpid, port=port_num)
+            raise PortNotFound(network_id = network_id,
+                                dpid = dpid, port = port_num)
 
         self.db.commit()
 
@@ -330,17 +355,17 @@ class API_DB(object):
         if bondEntry:
             dpid = bondEntry.datapath_id
         else:
-            raise BondNotFound(bond_id=bond_id)
+            raise BondNotFound(bond_id = bond_id)
 
-        params = and_(self.db_ports.datapath_id==dpid,
-                        self.db_ports.port_num==port_num,
-                        self.db_ports.bond_id==bond_id)
+        params = and_(self.db_ports.datapath_id == dpid,
+                        self.db_ports.port_num == port_num,
+                        self.db_ports.bond_id == bond_id)
         entry = self.db_ports.filter(params).first()
 
         if entry:
             entry.bond_id = None
         else:
-            raise BondPortNotFound(port=port_num, bond_id=bond_id)
+            raise BondPortNotFound(port = port_num, bond_id = bond_id)
 
         self.db.commit()
 
@@ -348,9 +373,9 @@ class API_DB(object):
         self.checkConnection()
         entry = self.db_flowspace.get(id)
         if not entry:
-            self.db_flowspace.insert(id=id, datapath_id=dpid, port_num=port_num, mac_address=mac)
+            self.db_flowspace.insert(id = id, datapath_id = dpid, port_num = port_num, mac_address = mac)
         else:
-            raise FlowSpaceIDAlreadyExist(flowspace_id=id)
+            raise FlowSpaceIDAlreadyExist(flowspace_id = id)
 
         self.db.commit()
 
@@ -369,9 +394,9 @@ class API_DB(object):
         self.checkConnection()
         entry = self.db_net2slice.get(network_id)
         if not entry:
-            self.db_net2slice.insert(network_id=network_id, slice=sliceName)
+            self.db_net2slice.insert(network_id = network_id, slice = sliceName)
         else:
-            raise NetworkAlreadyAssigned(network_id=network_id, sliceName=entry.slice)
+            raise NetworkAlreadyAssigned(network_id = network_id, sliceName = entry.slice)
 
         self.db.commit()
 
@@ -387,3 +412,67 @@ class API_DB(object):
         self.db.commit()
 
 
+    def add_flow(self, dpid, in_port, dest, src, priority, eth_type, actions, out_port, idle_timeout, hard_timeout):
+        ret = -1
+
+        con = self.db.engine.connect()
+        ins = self.db_flows.insert().values(datapath_id = dpid, in_port = in_port, dst = dest, src = src,
+                             eth_type = eth_type, priority = priority, idle_timeout = idle_timeout, hard_timeout = hard_timeout,
+                             actions = str(json.dumps(actions)), out_port = out_port, created_at = datetime.now(), deleted = False)
+        res = con.execute(ins)
+        try:
+            ret = int(res.inserted_primary_key[0])
+            LOG.info("flows added for %s, %s", dpid, ret)
+        except:
+            ret = -1
+            pass
+        con.close()
+
+        return ret
+
+    def load_flows(self, dpid, flow_store):
+        i_dpid = int(dpid, 16)
+        con = self.db.engine.connect()
+        """
+        params = {}
+        params['dpid'] = dpid
+        params['m'] = flow_store.largest_id(i_dpid)
+        params['c'] = flow_store.number_of_flows(i_dpid)
+        res = self.exec_procedure(con, 'Check_Change2', params)
+        """
+        fetch = False
+        try:
+            res = con.execute("select MAX(id) as max from flows where deleted=0 and datapath_id='%s'" % dpid)
+            for row in res:
+                if row['max'] > flow_store.largest_id(i_dpid):
+                    LOG.info("max id flows is %s, %s", row['max'], flow_store.largest_id(i_dpid))
+                    fetch = True
+                    break
+            if fetch == False:
+                res = con.execute("select COUNT(*) as cnt from flows where deleted=0 and datapath_id='%s'" % dpid)
+                for row in res:
+                    LOG.info("count of flows is %s, %s", row['cnt'], flow_store.number_of_flows(i_dpid))
+                    if row['cnt'] != flow_store.number_of_flows(i_dpid):
+                        fetch = True
+                        break
+        except:
+            fetch = True
+            pass
+
+        try:
+            if fetch:
+                sel = self.db_flows.select(and_(self.db_flows.c.deleted == False, self.db_flows.c.datapath_id == dpid))
+                res = con.execute(sel)
+                LOG.info("%s flows loaded for %s", res.rowcount, dpid)
+                for row in res:
+        #            print row
+                    flow_store.add_flow(None, i_dpid, row['in_port'], row['dst'], row['src'], row['eth_type'], eval(row['actions']),
+                                             row['priority'], row['out_port'], row['idle_timeout'], row['hard_timeout'], row['id'])
+        finally:
+            con.close()
+
+    def exec_procedure(session, proc_name, params):
+        sql_params = ",".join(["@{0}={1}".format(name, value) for name, value in params.items()])
+        sql_string = """ DECLARE @return_value int; EXEC @return_value = [dbo].[{proc_name}] {params}; SELECT 'Return Value' = @return_value; """.format(proc_name = proc_name, params = sql_params)
+
+        return session.execute(sql_string).fetchall()

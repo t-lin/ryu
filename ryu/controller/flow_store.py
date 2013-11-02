@@ -19,6 +19,7 @@ import time
 from ryu.exception import MacAddressDuplicated, MacAddressNotFound
 from ryu.lib.mac import haddr_to_str
 from ryu.ofproto import ofproto_v1_0
+from ryu.controller import api_db
 
 LOG = logging.getLogger('ryu.controller.flow_store')
 
@@ -38,6 +39,9 @@ class FlowStore(object):
         self.pendings = {}
         self.pendings_buffer_id = {}
         self.buffers_list = []
+        self.dpid_ids = {}
+        self.dpid_nums = {}
+        self._dhcp_flow = {}
 
     def _actions_equal(self, acts1, acts2):
         try:
@@ -92,27 +96,42 @@ class FlowStore(object):
 
         look_for_pending = False
         src_mac_list = dest_mac_dict.get(temp_src, [])
-        for index, (pr, eth_t, acts, out_ports, idle_timeout, hard_timeout, nums) in enumerate(src_mac_list):
+        for index, (id, pr, eth_t, acts, out_ports, idle_timeout, hard_timeout, nums) in enumerate(src_mac_list):
             if eth_t is None or eth_type == eth_t:
                 LOG.info("found : %s,%s,%s,%s,%s,%s" % (pr, eth_t, acts, out_ports, idle_timeout, hard_timeout))
-                return (pr, eth_t, acts, out_ports, idle_timeout, hard_timeout, with_source)
+                return (id, pr, eth_t, acts, out_ports, idle_timeout, hard_timeout, with_source)
 
         with_source = 0
         src_mac_list = dest_mac_dict.get('0', [])
-        for index, (pr, eth_t, acts, out_ports, idle_timeout, hard_timeout, nums) in enumerate(src_mac_list):
+        for index, (id, pr, eth_t, acts, out_ports, idle_timeout, hard_timeout, nums) in enumerate(src_mac_list):
             if eth_t is None or eth_type == eth_t:
-                ret = (pr, eth_t, acts, out_ports, idle_timeout, hard_timeout, with_source)
+                ret = (id, pr, eth_t, acts, out_ports, idle_timeout, hard_timeout, with_source)
                 LOG.info("found : %s" % (ret,))
                 return ret
 
-        return (None, None, None, None, None, None, None)
+        return (None, None, None, None, None, None, None, None)
 
-    def add_flow_dict(self, flow):
+    def add_dhcp_flow(self, dpid, in_port, src, actions):
+        self._dhcp_flow.setdefault(dpid, {})
+        self._dhcp_flow[dpid].setdefault(in_port, {})
+        self._dhcp_flow[dpid][in_port][src] = actions
+        return
+
+    def del_dhcp_flow(self, dpid, in_port, src):
+        try:
+            del self._dhcp_flow[dpid][in_port][src]
+        except:
+            pass
+
+    def get_dhcp_flow(self, dpid, in_port, src):
+        try:
+            return self._dhcp_flow[dpid][in_port][src]
+        except:
+            return None
+
+    def add_flow_dict(self, flow, api_db):
         match = flow.get('match', {})
         # first check to see if it is a dhcp flow
-        if match.get('tp_src', 0) == 68:
-            # this is a dhcp flow, no need to add to store
-            return
         priority = flow.get('priority', OFP_DEF_PRIORITY)
         src = match.get('dl_src', None)
         dest = match.get('dl_dst', None)
@@ -120,13 +139,17 @@ class FlowStore(object):
         in_port = match.get('in_port', None)
         dpid = flow.get('dpid', None)
         actions = flow.get('actions', {})
+        if match.get('tp_src', 0) == 68 and eth_type == 0x800:
+            # this is a dhcp flow, no need to add to store
+            self.add_dhcp_flow(dpid, in_port, src, actions)
+            return
 
         out_port = flow.get('out_port', ofproto_v1_0.OFPP_NONE)
         idle_timeout = flow.get('idle_timeout', 0)
         hard_timeout = flow.get('hard_timeout', 0)
 
         if dpid is not None and dest is not None:
-            self.add_flow(dpid, in_port, dest, src, eth_type, actions, priority, out_port, idle_timeout, hard_timeout)
+            self.add_flow(api_db, dpid, in_port, dest, src, eth_type, actions, priority, out_port, idle_timeout, hard_timeout)
         return
 
     def del_flow_dict(self, flow):
@@ -143,7 +166,13 @@ class FlowStore(object):
             self.del_flow(dpid, in_port, dest, src, eth_type)
         return
 
-    def add_flow(self, dpid, in_port, dest, src, eth_type, actions, priority, out_port, idle_timeout, hard_timeout):
+    def largest_id(self, dpid):
+        return self.dpid_ids.get(dpid, 0)
+
+    def number_of_flows(self, dpid):
+        return self.dpid_nums.get(dpid, 0)
+
+    def add_flow(self, api_db, dpid, in_port, dest, src, eth_type, actions, priority, out_port, idle_timeout, hard_timeout, id = -1):
         ret = True
 
         dp_dict = self._dps.setdefault(dpid, {})
@@ -156,17 +185,26 @@ class FlowStore(object):
         src_mac_list = dest_mac_dict.setdefault(temp_src, [])
 
         if len(src_mac_list) > 0:
-            for index, (pr, eth_t, acts, o, i1, j1, nums) in enumerate(src_mac_list):
+            for index, (id1, pr, eth_t, acts, o, i1, j1, nums) in enumerate(src_mac_list):
                 if eth_type is not None and eth_type != eth_t:
                     continue
                 if priority == pr and self._actions_equal(acts, actions):
                     ret = False
-                    src_mac_list[index] = (pr, eth_t, acts, out_port, idle_timeout, hard_timeout, nums + 1)
+                    src_mac_list[index] = (id1, pr, eth_t, acts, out_port, idle_timeout, hard_timeout, nums + 1)
 #                    LOG.info("updated : %s,%s,%s,%s,%s,%s,%s" % (priority, eth_t, actions, out_port, idle_timeout, hard_timeout, nums + 1))
                     break;
 
         if ret:
-            src_mac_list.append((priority, eth_type, actions, out_port, idle_timeout, hard_timeout, 1))
+            if api_db is not None:
+                try:
+                    id = api_db.add_flow(str(hex(dpid)), in_port, dest, src, priority, eth_type, actions, out_port, idle_timeout, hard_timeout)
+                except:
+                    id = -1
+                    raise
+            if id > self.dpid_ids.get(dpid, 0):
+                self.dpid_ids[dpid] = id
+            self.dpid_nums[dpid] = self.dpid_nums.get(dpid, 0) + 1
+            src_mac_list.append((id, priority, eth_type, actions, out_port, idle_timeout, hard_timeout, 1))
  #          LOG.info("added : %s,%s,%s,%s,%s,%s,%s" % (priority, eth_type, actions, out_port, idle_timeout, hard_timeout, 1))
 
         return ret
@@ -185,14 +223,15 @@ class FlowStore(object):
                 for sr, src_mac_list in dest_mac_dict.iteritems():
                     if src is not None and src != sr:
                         continue
-                    for index, (pr, eth_t, acts, out_ports, idle_timeout, hard_timeout, nums) in enumerate(src_mac_list):
+                    for index, (id, pr, eth_t, acts, out_ports, idle_timeout, hard_timeout, nums) in enumerate(src_mac_list):
                         if eth_type is not None and eth_t != eth_type:
                             continue
-                        src_mac_list[index] = (pr, eth_t, acts, out_ports, idle_timeout, hard_timeout, nums - 1)
+                        src_mac_list[index] = (id, pr, eth_t, acts, out_ports, idle_timeout, hard_timeout, nums - 1)
                         found = True
                         if (nums - 1) == 0:
                             ret = True;
                             del src_mac_list[index]
+                            self.dpid_nums[dpid] = self.dpid_nums[dpid] - 1
                         break;
 
         if not found :
