@@ -144,16 +144,41 @@ class StatsController(ControllerBase):
             return Response(status = 500)
         return Response(status = 200)
 
-    def mac_ip_del(self, req, **_kwargs):
+    def mac_ip_del(self, req, dpid, port_no, mac, **_kwargs):
         try:
+            LOG.info('mac_ip_del requested %s, %s, %s, %s', dpid, port_no, mac, req.body)
             body = eval(req.body)
-        except SyntaxError:
+        except:
             LOG.debug('invalid syntax %s', req.body)
             return Response(status = 400)
         mac = body.get('mac', None)
         dpid = body.get('dpid', None)
         ip = body.get('ip', None)
-        port_no = body.get('port_no', None)
+        if ip == '0.0.0.0':
+            ip = None
+        port_no = body.get('port', None)
+        dpid_list = body.get('dpid_list', [])
+        for id in dpid_list:
+            dp = self.dpset.get(int(id))
+            cmd = dp.ofproto.OFPFC_DELETE
+            flow = {}
+            flow['match'] = {}
+            flow['match']['dl_src'] = mac
+            ofctl_v1_0.mod_flow_entry(dp, flow, cmd)
+            flow = {}
+            flow['match'] = {}
+            flow['match']['dl_dst'] = mac
+            ofctl_v1_0.mod_flow_entry(dp, flow, cmd)
+
+        ip = None
+        try:
+            self.flow_store.del_dhcp_flow(int(dpid), int(port_no), mac)
+        except:
+            pass
+        try:
+            self.flow_store.del_mac_flows(int(dpid), int(port_no), mac)
+        except:
+            pass
         try:
             self.mac2port.mac_ip_del(mac = mac, ip = ip)
         except ValueError:
@@ -178,7 +203,7 @@ class StatsController(ControllerBase):
     def mod_flow_entry(self, req, cmd, **_kwargs):
         try:
             flow = eval(req.body)
-        except SyntaxError:
+        except:
             LOG.debug('invalid syntax %s', req.body)
             return Response(status = 400)
 
@@ -194,7 +219,7 @@ class StatsController(ControllerBase):
             elif cmd == 'modify':
                 cmd = dp.ofproto.OFPFC_MODIFY
             elif cmd == 'delete':
-                self.flow_store.del_flow_dict(flow)
+                self.flow_store.del_flow_dict(flow, self.api_db)
                 cmd = dp.ofproto.OFPFC_DELETE
                 print "dpid %s, %s, flow in delete is %s" % (dpid, hex(dpid), flow)
             else:
@@ -384,9 +409,9 @@ class RestStatsApi(app_manager.RyuApp):
                        controller = StatsController, action = 'mac_ip_add',
                        conditions = dict(method = ['POST']))
 
-        mapper.connect('stats', uri,
+        mapper.connect('stats', uri + '/del/{dpid}_{port_no}_{mac}',
                        controller = StatsController, action = 'mac_ip_del',
-                       conditions = dict(method = ['DELETE']))
+                       conditions = dict(method = ['POST']))
 
         # For Janus -> Ryu APIs
         wsgi.registory['PacketController'] = self.data

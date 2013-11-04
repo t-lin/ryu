@@ -117,24 +117,27 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
             buffer_id = 0xffffffff, out_port = ofproto.OFPP_NONE,
             flags = ofproto.OFPFF_SEND_FLOW_REM, actions = actions)
 
-    def _modflow_and_drop_packet(self, msg, src, dst, priority = OFP_DEFAULT_PRIORITY):
+    def _modflow_and_drop_packet(self, msg, src, dst, priority = OFP_DEFAULT_PRIORITY, idle_timeout = 0):
         LOG.info("installing flow for dropping packet")
         datapath = msg.datapath
         in_port = msg.in_port
 
-        self._install_modflow(msg, in_port, src, dst, actions = [], priority = priority)
+        self._install_modflow(msg, in_port, src, dst, actions = [], priority = priority, idle_timeout = idle_timeout)
         datapath.send_packet_out(msg.buffer_id, in_port, [])
 
     def _forward2Controller(self, method, url, body = None, headers = None):
 
         try:
             self._conn.request(method, url, body, headers)
-            res = conn.getresponse()
+            res = self._conn.getresponse()
+            res.read()
         except:
             try:
+                LOG.info("Failed to Send to Janus first time: %s, %s, body = %s", method, url, body)
                 self._conn = httplib.HTTPConnection(self.host, self.port)
                 self._conn.request(method, url, body, headers)
                 res = self._conn.getresponse()
+                res.read()
             except:
                 LOG.warning("Failed to Send to Janus: body = %s", body)
                 return
@@ -200,7 +203,7 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
                         flow = {}
                         flow['in_port'] = in_port
                         flow['dl_dst'] = 'ff:ff:ff:ff:ff:ff'
-#                        flow['dl_src'] = haddr_to_str(dl_src)
+                        flow['dl_src'] = haddr_to_str(dl_src)
                         flow['dl_type'] = OFI_ETH_TYPE_IP
                         flow['nw_proto'] = inet.IPPROTO_UDP
 #                        flow['nw_dst'] = "0.0.0.0/32"
@@ -257,7 +260,7 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
 
         if dl_dst != mac.BROADCAST and is_multicast(dl_dst):
             # drop and install rule to drop
-            self._modflow_and_drop_packet(msg, None, dl_dst, OFP_DEFAULT_PRIORITY + 25000)
+            self._modflow_and_drop_packet(msg, None, dl_dst, OFP_DEFAULT_PRIORITY + 25000, idle_timeout = 360)
             return
 
         contents.set_in_port(msg.in_port)

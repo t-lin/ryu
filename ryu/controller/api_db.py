@@ -430,6 +430,44 @@ class API_DB(object):
 
         return ret
 
+    def del_flow(self, dpid, in_port, dest, id):
+        ret = -1
+
+        con = self.db.engine.connect()
+        update = self.db_flows.update().where(and_(self.db_flows.c.datapath_id == dpid,
+                                              self.db_flows.c.in_port == in_port,
+                                              self.db_flows.c.dst == dest,
+                                              self.db_flows.c.id == id)).values(deleted = True,
+                                                                              deleted_at = datetime.now())
+        try:
+            res = con.execute(update)
+            ret = 1
+            LOG.info("flows deleted for %s, %s, %s, %s", dpid, in_port, dest, id)
+        except:
+            ret = -1
+            pass
+        con.close()
+
+        return ret
+
+    def del_flows_mac(self, mac):
+        ret = -1
+
+        con = self.db.engine.connect()
+        update = self.db_flows.update().where(or_(self.db_flows.c.dst == dest,
+                                                  self.db_flows.c.src == src)).values(deleted = True,
+                                                                              deleted_at = datetime.now())
+        try:
+            res = con.execute(delet)
+            ret = 1
+            LOG.info("flows deleted for %s, %s, %s, %s", dpid, in_port, dest, id)
+        except:
+            ret = -1
+            pass
+        con.close()
+
+        return ret
+
     def load_flows(self, dpid, flow_store):
         i_dpid = int(dpid, 16)
         con = self.db.engine.connect()

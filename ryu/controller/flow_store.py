@@ -42,6 +42,7 @@ class FlowStore(object):
         self.dpid_ids = {}
         self.dpid_nums = {}
         self._dhcp_flow = {}
+        self._mac_flows_dict = {}
 
     def _actions_equal(self, acts1, acts2):
         try:
@@ -57,11 +58,13 @@ class FlowStore(object):
             return False
 
     def del_port(self, dpid, port_no):
-        dp_dict = self._dps.setdefault(dpid, {})
-        in_port_dict = dp_dict.setdefault(port_no, None)
-        if in_port_dict is not None:
-            del dp_dict[port_no]
+        dp_dict = self._dps.get(dpid, None)
+        if dp_dict is not None:
+            in_port_dict = dp_dict.get(port_no, None)
+            if in_port_dict is not None:
+                del dp_dict[port_no]
 
+    """
     def del_mac(self, dpid, mac):
         dp_dict = self._dps.setdefault(dpid, {})
         for port_no, in_port_dict in dp_dict.iteritems():
@@ -76,7 +79,7 @@ class FlowStore(object):
                         if mac in src_mac_list:
                             src_mac_list.remove(mac)
         return
-
+    """
 
     def get_all_flows(self, dpid = None):
         if dpid is None:
@@ -152,7 +155,7 @@ class FlowStore(object):
             self.add_flow(api_db, dpid, in_port, dest, src, eth_type, actions, priority, out_port, idle_timeout, hard_timeout)
         return
 
-    def del_flow_dict(self, flow):
+    def del_flow_dict(self, flow, api_db):
         priority = flow.get('priority', OFP_DEF_PRIORITY)
         match = flow.get('match', {})
         src = match.get('dl_src', None)
@@ -163,7 +166,7 @@ class FlowStore(object):
         actions = flow.get('actions', {})
 
         if dpid is not None:
-            self.del_flow(dpid, in_port, dest, src, eth_type)
+            self.del_flow(api_db, dpid, in_port, dest, src, eth_type)
         return
 
     def largest_id(self, dpid):
@@ -177,12 +180,21 @@ class FlowStore(object):
 
         dp_dict = self._dps.setdefault(dpid, {})
         in_port_dict = dp_dict.setdefault(in_port, {})
+        if in_port_dict is None:
+            dp_dict[in_port] = {}
+            in_port_dict = dp_dict[in_port]
         dest_mac_dict = in_port_dict.setdefault(dest, {})
+        if dest_mac_dict is None:
+            in_port_dict[dest] = {}
+            dest_mac_dict = in_port_dict[dest]
         if src is None:
             temp_src = '0'
         else:
             temp_src = src
         src_mac_list = dest_mac_dict.setdefault(temp_src, [])
+        if src_mac_list is None:
+            dest_mac_dict[temp_src] = []
+            src_mac_list = dest_mac_dict[temp_src]
 
         if len(src_mac_list) > 0:
             for index, (id1, pr, eth_t, acts, o, i1, j1, nums) in enumerate(src_mac_list):
@@ -192,7 +204,7 @@ class FlowStore(object):
                     ret = False
                     src_mac_list[index] = (id1, pr, eth_t, acts, out_port, idle_timeout, hard_timeout, nums + 1)
 #                    LOG.info("updated : %s,%s,%s,%s,%s,%s,%s" % (priority, eth_t, actions, out_port, idle_timeout, hard_timeout, nums + 1))
-                    break;
+                    break
 
         if ret:
             if api_db is not None:
@@ -205,39 +217,87 @@ class FlowStore(object):
                 self.dpid_ids[dpid] = id
             self.dpid_nums[dpid] = self.dpid_nums.get(dpid, 0) + 1
             src_mac_list.append((id, priority, eth_type, actions, out_port, idle_timeout, hard_timeout, 1))
+            if src is not None:
+                self.add_mac_flow(dpid, in_port, src, True, dest)
+            self.add_mac_flow(dpid, in_port, dest, False, src)
  #          LOG.info("added : %s,%s,%s,%s,%s,%s,%s" % (priority, eth_type, actions, out_port, idle_timeout, hard_timeout, 1))
 
         return ret
 
-    def del_flow(self, dpid, in_port, dest, src, eth_type):
+    def del_flow(self, api_db, dpid, in_port, dest, src, eth_type):
         ret = False
         found = False
 
-        dp_dict = self._dps.setdefault(dpid, {})
+        dp_dict = self._dps.get(dpid, None)
+        if dp_dict is None:
+            return True
+        in_p_to_be_removed = []
         for in_p, in_p_dict in dp_dict.iteritems():
             if in_port is not None and in_port != in_p:
                 continue
+            dst_to_be_removed = []
             for dst, dest_mac_dict in in_p_dict.iteritems():
                 if dest is not None and dest != dst:
                     continue
+                elements_be_removed = []
                 for sr, src_mac_list in dest_mac_dict.iteritems():
                     if src is not None and src != sr:
                         continue
+                    index_to_be_removed = []
                     for index, (id, pr, eth_t, acts, out_ports, idle_timeout, hard_timeout, nums) in enumerate(src_mac_list):
                         if eth_type is not None and eth_t != eth_type:
                             continue
                         src_mac_list[index] = (id, pr, eth_t, acts, out_ports, idle_timeout, hard_timeout, nums - 1)
                         found = True
-                        if (nums - 1) == 0:
-                            ret = True;
-                            del src_mac_list[index]
-                            self.dpid_nums[dpid] = self.dpid_nums[dpid] - 1
-                        break;
+#                        if (nums - 1) == 0:
+                        ret = True
+                        index_to_be_removed.append(index)
+                        self.dpid_nums[dpid] = self.dpid_nums[dpid] - 1
+                        if api_db and id != -1:
+                            try:
+                                api_db.del_flow(str(hex(dpid)), in_p, dst, id)
+                            except:
+                                raise
+                    index_to_be_removed.reverse()
+                    for index in index_to_be_removed:
+                        del src_mac_list[index]
+                    if len(src_mac_list) == 0:
+                        elements_be_removed.append(sr)
+
+                for sr in elements_be_removed:
+                    del dest_mac_dict[sr]
+                if len(dest_mac_dict) == 0:
+                    dst_to_be_removed.append(dst)
+
+            for dst in dst_to_be_removed:
+                del in_p_dict[dst]
+            if len(in_p_dict) == 0:
+                in_p_to_be_removed.append(in_p)
+
+        for in_p in in_p_to_be_removed:
+            del dp_dict[in_p]
 
         if not found :
             ret = True
 
         return ret
+
+    def add_mac_flow(self, dpid, port, mac, src_or_dst, other_mac):
+        flows_list = self._mac_flows_dict.setdefault(mac, [])
+        flows_list.append((dpid, port, src_or_dst, other_mac))
+        return
+
+    def del_mac_flows(self, dpid, port_no, mac):
+        flows_list = self._mac_flows_dict.get(mac, None)
+        if flows_list is not None:
+            for (dp_id, port, src_or_dst, other_mac) in flows_list:
+                if src_or_dst:
+                    self.del_flow(None, dp_id, port, other_mac, mac, None)
+                else:
+                    self.del_flow(None, dp_id, port, mac, other_mac, None)
+            del flows_list
+            del self._mac_flows_dict[mac]
+        return
 
     def add_msg_to_pending(self, buffer_id, dpid, in_port, src, dst, eth_type):
         self.pendings.setdefault(dpid, {})
@@ -333,19 +393,22 @@ class FlowStore(object):
 
     def clear_expired_pending_msgs(self):
         expired_list = []
+        to_be_deleted_list = []
         for index, (dpid, in_port, buffer_id) in enumerate(self.buffers_list):
             try:
                 (src, dst, eth_type) = self.pendings_buffer_id[dpid][in_port][buffer_id]
                 (buffers, time_stamp) = self.pendings[dpid][in_port][dst][src][eth_type]
                 if buffers is not None and time.time() - time_stamp > 60:
+                    to_be_deleted_list.append(index)
 #                   LOG.info("deleting  expired pending msg %s", buffers)
-                    expired_list.append((dpid, in_port, buffer_id))
                     for id in buffers:
+                        expired_list.append((dpid, in_port, id))
                         try:
                             del self.pendings_buffer_id[dpid][in_port][id]
                         except:
                             pass
                         try:
+                            # it is ok to remove future indexes in the same loop
                             self.buffers_list.remove((dpid, in_port, id))
                         except:
                             pass
@@ -358,10 +421,13 @@ class FlowStore(object):
                         del self.pendings[dpid][in_port][dst][src][eth_type]
                     except:
                         pass
-                    try:
-                        buffer_list.remove((dpid, in_port, buffer_id))
-                    except:
-                        pass
             except:
                 pass
+        to_be_deleted_list.reverse()
+        for id in to_be_deleted_list:
+            try:
+                del self.buffers_list[id]
+            except:
+                pass
+
         return expired_list
