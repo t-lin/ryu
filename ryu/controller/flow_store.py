@@ -58,11 +58,14 @@ class FlowStore(object):
             return False
 
     def del_port(self, dpid, port_no):
+        pass
+        """
         dp_dict = self._dps.get(dpid, None)
         if dp_dict is not None:
             in_port_dict = dp_dict.get(port_no, None)
             if in_port_dict is not None:
                 del dp_dict[port_no]
+        """
 
     """
     def del_mac(self, dpid, mac):
