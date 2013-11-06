@@ -22,6 +22,8 @@ import json
 import gflags
 import ctypes
 import gevent
+import time
+import traceback
 
 from ryu.base import app_manager
 from ryu.controller import mac_to_port
@@ -36,6 +38,8 @@ from ryu.lib.mac import haddr_to_str, ipaddr_to_str, is_multicast
 from ryu.lib.lldp import ETH_TYPE_LLDP, LLDP_MAC_NEAREST_BRIDGE
 from janus.network.of_controller.janus_of_consts import JANEVENTS, JANPORTREASONS
 from janus.network.of_controller.event_contents import EventContents
+from janus.network.of_controller.janus_of_consts import ARP_TIMEOUT, ARP_CLEANING_TIMER, ARP_AUDIT_TIMER
+
 from dpkt.ntp import BROADCAST
 from ryu.ofproto import nx_match, inet
 from ryu.lib import mac, ofctl_v1_0
@@ -495,6 +499,8 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
         datapath.send_packet_out(msg.buffer_id, msg.in_port, [])
 
     def cleaning_loop(self):
+        expire1 = time.time()
+        expire2 = expire1
         while self.is_active:
             try:
                 gevent.sleep(seconds = 15)
@@ -508,7 +514,30 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
                         datapath.send_packet_out(id, in_port, [])
                     except:
                         pass
+                if (time.time() - expire1) > ARP_CLEANING_TIMER:
+                    self.mac2port.clear_old_entries_in_ip_mac()
+                    expire1 = time.time()
+                if (time.time() - expire2) > ARP_AUDIT_TIMER:
+                    ip_to_mac_dict = self.mac2port.get_ip_to_mac_dict()
+                    expire2 = time.time()
+                    if len(ip_to_mac_dict) > 0:
+                        method = 'PUT'
+                        new_dict = {}
+                        for ip, (mac, t) in ip_to_mac_dict.iteritems():
+                            try:
+                                new_dict[ipaddr_to_str(ip)] = haddr_to_str(mac)
+                            except:
+                                pass
+                        if len(new_dict) > 0:
+                            body = json.dumps({'event': {'of_event_id': JANEVENTS.JAN_EV_IP_TO_MAC_LIST, 'ip_dict': new_dict}})
+                            header = {"Content-Type": "application/json"}
+
+                            url = self.url_prefix
+                            LOG.info("FORWARDING FEATURES REPLY TO JANUS: body = %s", body)
+                            self._forward2Controller(method, url, body, header)
+
             except:
+                traceback.print_exc()
                 pass
 
 

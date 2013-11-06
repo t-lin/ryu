@@ -125,6 +125,22 @@ class StatsController(ControllerBase):
         body = json.dumps(ports)
         return (Response(content_type = 'application/json', body = body))
 
+    def mac_ip_del_list(self, req, **_kwargs):
+        try:
+            body = eval(req.body)
+        except SyntaxError:
+            LOG.debug('invalid syntax in mac_ip_del_list %s', req.body)
+            return Response(status = 400)
+
+        ip_list = body.get('mac_ip_list', [])
+        for (mac, ip) in ip_list:
+            try:
+                self.mac2port.mac_ip_del(haddr_to_bin(mac), ipaddr_to_bin(ip))
+            except:
+                pass
+
+        return Response(status = 200)
+
     def mac_ip_add(self, req, **_kwargs):
         try:
             body = eval(req.body)
@@ -136,7 +152,7 @@ class StatsController(ControllerBase):
         ip = body.get('ip', None)
         port_no = body.get('port_no', None)
         try:
-            self.mac2port.mac_ip_add(mac = mac, ip = ip)
+            self.mac2port.mac_ip_add(mac = haddr_to_bin(mac), ip = ipaddr_to_bin(ip))
         except ValueError:
             print 'Invalid ip address format. Check the ip you are registering: %s' % ip
             return Response(status = 500)
@@ -179,8 +195,15 @@ class StatsController(ControllerBase):
             self.flow_store.del_mac_flows(int(dpid), int(port_no), mac)
         except:
             pass
+        ip_bin = None
         try:
-            self.mac2port.mac_ip_del(mac = mac, ip = ip)
+            if ip is not None:
+                ip_bin = ipaddr_to_bin(ip)
+        except:
+            ip_bin = None
+
+        try:
+            self.mac2port.mac_ip_del(mac = haddr_to_bin(mac), ip = ip_bin)
         except ValueError:
             print 'Invalid ip address format. Check the ip you are registering: %s' % ip
             return Response(status = 500)
@@ -409,9 +432,14 @@ class RestStatsApi(app_manager.RyuApp):
                        controller = StatsController, action = 'mac_ip_add',
                        conditions = dict(method = ['POST']))
 
+        mapper.connect('stats', uri + '/del_list',
+                       controller = StatsController, action = 'mac_ip_del_list',
+                       conditions = dict(method = ['POST']))
+
         mapper.connect('stats', uri + '/del/{dpid}_{port_no}_{mac}',
                        controller = StatsController, action = 'mac_ip_del',
                        conditions = dict(method = ['POST']))
+
 
         # For Janus -> Ryu APIs
         wsgi.registory['PacketController'] = self.data
