@@ -165,14 +165,12 @@ class StatsController(ControllerBase):
             LOG.info('mac_ip_del requested %s, %s, %s, %s', dpid, port_no, mac, req.body)
             body = eval(req.body)
         except:
+            traceback.print_exc()
             LOG.debug('invalid syntax %s', req.body)
             return Response(status = 400)
-        mac = body.get('mac', None)
-        dpid = body.get('dpid', None)
         ip = body.get('ip', None)
         if ip == '0.0.0.0':
             ip = None
-        port_no = body.get('port', None)
         dpid_list = body.get('dpid_list', [])
         for id in dpid_list:
             dp = self.dpset.get(int(id))
