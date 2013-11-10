@@ -64,6 +64,8 @@ class API_DB(object):
                         Column('priority', Integer, default = -1),
                         Column('idle_timeout', Integer, default = -1),
                         Column('hard_timeout', Integer, default = -1),
+                        Column('user_id', String(50)),
+                        Column('extra_match', String(200)),
                         Column('actions', String(255), default = ''),
                         Column('out_port', Integer, default = -1),
                         Column('created_at', DateTime , default = datetime.now()),
@@ -412,13 +414,17 @@ class API_DB(object):
         self.db.commit()
 
 
-    def add_flow(self, dpid, in_port, dest, src, priority, eth_type, actions, out_port, idle_timeout, hard_timeout):
+    def add_flow(self, dpid, in_port, dest, src, priority, eth_type, actions, out_port, idle_timeout, hard_timeout, user_id, extra_match):
         ret = -1
 
+        ex_match = None
+        if extra_match is not None and len(extra_match) > 0:
+            ex_match = str(json.dumps(extra_match))
         con = self.db.engine.connect()
         ins = self.db_flows.insert().values(datapath_id = dpid, in_port = in_port, dst = dest, src = src,
                              eth_type = eth_type, priority = priority, idle_timeout = idle_timeout, hard_timeout = hard_timeout,
-                             actions = str(json.dumps(actions)), out_port = out_port, created_at = datetime.now(), deleted = False)
+                             actions = str(json.dumps(actions)), out_port = out_port, created_at = datetime.now(), deleted = False,
+                             user_id = user_id, extra_match = ex_match)
         res = con.execute(ins)
         try:
             ret = int(res.inserted_primary_key[0])
@@ -443,6 +449,25 @@ class API_DB(object):
             res = con.execute(update)
             ret = 1
             LOG.info("flows deleted for %s, %s, %s, %s", dpid, in_port, dest, id)
+        except:
+            ret = -1
+            pass
+        con.close()
+
+        return ret
+
+    def del_user_flow(self, i_dpid, user_id, id):
+        ret = -1
+
+        con = self.db.engine.connect()
+        update = self.db_flows.update().where(and_(self.db_flows.c.id == id,
+                                                   self.db_flows.c.datapath_id == str(hex(i_dpid)),
+                                                   self.db_flows.c.user_id == user_id)).values(deleted = True,
+                                                                              deleted_at = datetime.now())
+        try:
+            res = con.execute(update)
+            ret = 1
+            LOG.info("flows deleted for dpid = %s, id=%s, user_id=%s", i_dpid, id, user_id)
         except:
             ret = -1
             pass
@@ -504,8 +529,14 @@ class API_DB(object):
                 LOG.info("%s flows loaded for %s", res.rowcount, dpid)
                 for row in res:
         #            print row
+                    extra_match = row['extra_match']
+                    if extra_match is not None:
+                        try:
+                            extra_match = eval(extra_match)
+                        except:
+                            extra_match = None
                     flow_store.add_flow(None, i_dpid, row['in_port'], row['dst'], row['src'], row['eth_type'], eval(row['actions']),
-                                             row['priority'], row['out_port'], row['idle_timeout'], row['hard_timeout'], row['id'])
+                                             row['priority'], row['out_port'], row['idle_timeout'], row['hard_timeout'], in_id = row['id'], user_id = row['user_id'], extra_match = extra_match)
         finally:
             con.close()
 

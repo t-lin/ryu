@@ -19,6 +19,7 @@ import struct
 import datetime
 import calendar
 import gflags
+import traceback
 
 import json
 from webob import Response
@@ -163,7 +164,7 @@ class StatsController(ControllerBase):
     def mac_ip_del(self, req, dpid, port_no, mac, **_kwargs):
         try:
             LOG.info('mac_ip_del requested %s, %s, %s, %s', dpid, port_no, mac, req.body)
-            body = eval(req.body)
+            body = json.loads(req.body)
         except:
             traceback.print_exc()
             LOG.debug('invalid syntax %s', req.body)
@@ -232,11 +233,11 @@ class StatsController(ControllerBase):
         dp = self.dpset.get(int(dpid))
         if dp is None:
             return Response(status = 404)
-
+        id = 0
         if dp.ofproto.OFP_VERSION == ofproto_v1_0.OFP_VERSION:
             if cmd == 'add':
                 cmd = dp.ofproto.OFPFC_ADD
-                self.flow_store.add_flow_dict(flow, self.api_db)
+                id = self.flow_store.add_flow_dict(flow, self.api_db)
             elif cmd == 'modify':
                 cmd = dp.ofproto.OFPFC_MODIFY
             elif cmd == 'delete':
@@ -250,6 +251,45 @@ class StatsController(ControllerBase):
         else:
             LOG.debug('Unsupported OF protocol')
             return Response(status = 501)
+
+        return Response(status = 200, body = str(id))
+
+    def get_user_flow(self, req, user_id, dpid, id = None, **_kwargs):
+        user_flow_dict = self.flow_store.get_user_flows(int(dpid, 16), user_id, id)
+        return Response(status = 200, body = json.dumps(user_flow_dict))
+
+    def del_user_flow(self, req, user_id, dpid = None, id = None, **_kwargs):
+        id_list = []
+        if id is not None:
+            id_list.append((dpid, id))
+        try:
+            if req.body is not None and len(req.body) > 0:
+                list = eval(req.body)
+                id_list.extend(list)
+        except:
+            LOG.debug('invalid syntax in del_user_flow %s', req.body)
+            return Response(status = 400)
+
+
+        try:
+            for (dp_id, i) in id_list:
+                (d_id, pr, in_port, src, dst, eth_type, extra_match) = self.flow_store.del_user_flow(self.api_db, dp_id, user_id, int(i))
+                if d_id is not None:
+                    flow = {}
+                    flow['dpid'] = d_id
+                    dp = self.dpset.get(int(d_id))
+                    flow['in_port'] = in_port
+                    flow['priority'] = pr
+                    flow['match'] = {}
+                    flow['match']['in_port'] = in_port
+                    flow['match']['dl_src'] = src
+                    flow['match']['dl_dst'] = dst
+                    flow['match']['eth_type'] = eth_type
+                    flow['match'].update(extra_match)
+                    ofctl_v1_0.mod_flow_entry(dp, flow, dp.ofproto.OFPFC_DELETE)
+        except:
+            traceback.print_exc()
+            return Response(status = 500)
 
         return Response(status = 200)
 
@@ -406,10 +446,32 @@ class RestStatsApi(app_manager.RyuApp):
                        controller = StatsController, action = 'get_port_stats',
                        conditions = dict(method = ['GET']))
 
+        uri = path + '/user_flow/{user_id}/{dpid}/{id}'
+        mapper.connect('stats', uri,
+                       controller = StatsController, action = 'get_user_flow',
+                       conditions = dict(method = ['GET']))
+
+        uri = path + '/user_flow/{user_id}/{dpid}'
+        mapper.connect('stats', uri,
+                       controller = StatsController, action = 'get_user_flow',
+                       conditions = dict(method = ['GET']))
+
+        uri = path + '/del_user_flow/{user_id}/{dpid}/{id}'
+        mapper.connect('stats', uri,
+                       controller = StatsController, action = 'del_user_flow',
+                       conditions = dict(method = ['POST']))
+
+        uri = path + '/del_user_flow/{user_id}'
+        mapper.connect('stats', uri,
+                       controller = StatsController, action = 'del_user_flow',
+                       conditions = dict(method = ['POST']))
+
         uri = path + '/flowentry/{cmd}'
         mapper.connect('stats', uri,
                        controller = StatsController, action = 'mod_flow_entry',
                        conditions = dict(method = ['POST']))
+
+
         uri = path + '/flowentry/clear/{dpid}'
         mapper.connect('stats', uri,
                        controller = StatsController, action = 'delete_flow_entry',

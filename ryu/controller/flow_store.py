@@ -15,6 +15,7 @@
 
 import logging
 import time
+import socket, struct
 
 from ryu.exception import MacAddressDuplicated, MacAddressNotFound
 from ryu.lib.mac import haddr_to_str
@@ -43,15 +44,27 @@ class FlowStore(object):
         self.dpid_nums = {}
         self._dhcp_flow = {}
         self._mac_flows_dict = {}
+        self._user_flows = {}
 
     def _actions_equal(self, acts1, acts2):
         try:
             if len(acts1) != len(acts2):
                 return False
             for index, act in enumerate(acts1):
-                if act.get('type', 0) != acts2[index].get('type', 1):
+                type = act.get('type', None)
+                if type != acts2[index].get('type', 1):
                     return False
-                if act.get('port', -1) != acts2[index].get('port', -2):
+                if type == 'OUTPUT':
+                    if act.get('port', -1) != acts2[index].get('port', -2):
+                        return False
+                elif type == 'SET_DL_DST':
+                    if act.get('dl_dst', -1) != acts2[index].get('dl_dst', -2):
+                        return False
+                elif type == 'SET_DL_SRC':
+                    if act.get('dl_src', -1) != acts2[index].get('dl_src', -2):
+                        return False
+                else:
+                    LOG.warn("unknown action in actions_equal %s", type)
                     return False
             return True
         except:
@@ -84,12 +97,90 @@ class FlowStore(object):
         return
     """
 
+    def addressInNetwork(self, ipaddr, net):
+       "Is an address in a network"
+       # ipaddr = struct.unpack('L', socket.inet_aton(ip))[0]
+       try:
+           netaddr, bits = net.split('/')
+           netmask = struct.unpack('<L', socket.inet_aton(netaddr))[0] & ((2L << int(bits) - 1) - 1)
+           return ipaddr & netmask == netmask
+       except:
+           traceback.print_exc()
+           return False
+
+    def _compare_extra_match(self, ex_match, extra_match):
+        if ex_match is None and extra_match is not None:
+            return False
+        if extra_match is None and ex_match is not None:
+            return False
+        if extra_match is None and ex_match is None:
+            return True
+
+        for key in 'nw_proto', 'nw_src', 'nw_dst', 'tp_src', 'tp_dst':
+            if ex_match.get(key, None) != extra_match.get(key, None):
+                return False
+
+        return True
+
+    def _match_equal(self, extra_match, nw_proto, nw_src, nw_dst, tp_src, tp_dst):
+        nw_p = extra_match.get('nw_proto', None)
+        nw_s = extra_match.get('nw_src', None)
+        nw_d = extra_match.get('nw_dst', None)
+        tp_s = extra_match.get('tp_src', None)
+        tp_d = extra_match.get('tp_dst', None)
+
+        if  nw_p != None and nw_p != nw_proto:
+            return False
+        if  nw_s != None and not self.addressInNetwork(nw_src, nw_s):
+            return False
+        if  nw_d != None and not self.addressInNetwork(nw_dst, nw_d):
+            return False
+        if  tp_s != None and tp_s != tp_src:
+            return False
+        if  tp_d != None and tp_d != tp_dst:
+            return False
+
+        return True
+
+
     def get_all_flows(self, dpid = None):
         if dpid is None:
             return self._dps
         return self._dps.get(dpid, {})
 
-    def get_flow(self, dpid, in_port, src, dst, eth_type, pending = False):
+    def get_user_flows(self, dpid = None, user_id = None, req_id = None):
+        if dpid is None:
+            return self._user_flows
+        u_dict = self._user_flows.get(dpid, None)
+        if u_dict is None:
+            return {}
+        r_dict = {}
+        delete_item = []
+        if user_id is not None and req_id is not None:
+            (in_port, dest, src, eth_type, src_mac_list) = u_dict.get(int(req_id), (None, None, None, None, None))
+            if in_port is not None:
+                for (pr, id, eth_t, acts, out_ports, idle_timeout, hard_timeout, nums, u_id, extra_match) in src_mac_list:
+                    if u_id is not None:
+                        if user_id != u_id or int(req_id) != id:
+                            continue
+                        r_dict[id] = (in_port, dest, src, eth_t, pr, acts, out_ports, idle_timeout, hard_timeout, u_id, extra_match)
+                        break
+            return r_dict
+
+        for id, (in_port, dest, src, eth_type, src_mac_list) in u_dict.iteritems():
+            if src_mac_list is None or len(src_mac_list) == 0:
+                delete_ietm.append(id)
+                continue
+            for (pr, id, eth_t, acts, out_ports, idle_timeout, hard_timeout, nums, u_id, extra_match) in src_mac_list:
+                if u_id is not None:
+                    if user_id is not None and user_id != u_id:
+                        continue
+                    r_dict[id] = (in_port, dest, src, eth_t, pr, acts, out_ports, idle_timeout, hard_timeout, u_id, extra_match)
+        for id in delete_item:
+            del u_dict[id]
+        return r_dict
+
+    def get_flow(self, dpid, in_port, src, dst, eth_type, nw_proto = None, nw_src = None, nw_dst = None, tp_src = None, tp_dst = None):
         dp_dict = self._dps.get(dpid, {})
         in_port_dict = dp_dict.get(in_port, {})
         dest_mac_dict = in_port_dict.get(dst, {})
@@ -102,15 +193,21 @@ class FlowStore(object):
 
         look_for_pending = False
         src_mac_list = dest_mac_dict.get(temp_src, [])
-        for index, (id, pr, eth_t, acts, out_ports, idle_timeout, hard_timeout, nums) in enumerate(src_mac_list):
+        for index, (pr, id, eth_t, acts, out_ports, idle_timeout, hard_timeout, nums, user_id, extra_match) in enumerate(src_mac_list):
             if eth_t is None or eth_type == eth_t:
+                if extra_match is not None:
+                    if not self._match_equal(extra_match, nw_proto, nw_src, nw_dst, tp_src, tp_dst):
+                        continue
                 LOG.info("found : %s,%s,%s,%s,%s,%s" % (pr, eth_t, acts, out_ports, idle_timeout, hard_timeout))
                 return (id, pr, eth_t, acts, out_ports, idle_timeout, hard_timeout, with_source)
 
         with_source = 0
         src_mac_list = dest_mac_dict.get('0', [])
-        for index, (id, pr, eth_t, acts, out_ports, idle_timeout, hard_timeout, nums) in enumerate(src_mac_list):
+        for index, (pr, id, eth_t, acts, out_ports, idle_timeout, hard_timeout, nums, user_id, extra_match) in enumerate(src_mac_list):
             if eth_t is None or eth_type == eth_t:
+                if extra_match is not None:
+                    if not self._match_equal(extra_match, nw_proto, nw_src, nw_dst, tp_src, tp_dst):
+                        continue
                 ret = (id, pr, eth_t, acts, out_ports, idle_timeout, hard_timeout, with_source)
                 LOG.info("found : %s" % (ret,))
                 return ret
@@ -145,7 +242,8 @@ class FlowStore(object):
         in_port = match.get('in_port', None)
         dpid = flow.get('dpid', None)
         actions = flow.get('actions', {})
-        if match.get('tp_src', 0) == 68 and eth_type == 0x800:
+        user_id = flow.get('user_id', None)
+        if user_id is None and match.get('tp_src', 0) == 68 and eth_type == 0x800:
             # this is a dhcp flow, no need to add to store
             self.add_dhcp_flow(dpid, in_port, src, actions)
             return
@@ -154,9 +252,16 @@ class FlowStore(object):
         idle_timeout = flow.get('idle_timeout', 0)
         hard_timeout = flow.get('hard_timeout', 0)
 
+        extra_match = {}
+        for key, val in match.iteritems():
+            if key in ('tp_src', 'tp_dst', 'nw_src', 'nw_dst', 'nw_proto'):
+                    extra_match[key] = val
+        if len(extra_match) == 0:
+            extra_match = None
+
         if dpid is not None and dest is not None:
-            self.add_flow(api_db, dpid, in_port, dest, src, eth_type, actions, priority, out_port, idle_timeout, hard_timeout)
-        return
+            return self.add_flow(api_db, dpid, in_port, dest, src, eth_type, actions, priority, out_port, idle_timeout, hard_timeout, user_id = user_id, extra_match = extra_match)
+        return -1
 
     def del_flow_dict(self, flow, api_db):
         priority = flow.get('priority', OFP_DEF_PRIORITY)
@@ -178,7 +283,27 @@ class FlowStore(object):
     def number_of_flows(self, dpid):
         return self.dpid_nums.get(dpid, 0)
 
-    def add_flow(self, api_db, dpid, in_port, dest, src, eth_type, actions, priority, out_port, idle_timeout, hard_timeout, id = -1):
+    def del_user_flow(self, api_db, dpid, user_id, id):
+        i_dpid = int(dpid, 16)
+        ret = (None, None, None, None, None, None, None)
+        if api_db is not None and user_id is not None and id is not None:
+            user_dict = self._user_flows.get(i_dpid, {})
+            (in_port, dest, src, eth_type, src_mac_list) = user_dict.pop(id, (None, None, None, None, None))
+            if src_mac_list is not None and len(src_mac_list) > 0:
+                for index, (pr, id1, eth_t, acts, o, i1, j1, nums, u_id, extra_match) in enumerate(src_mac_list):
+                    if id1 == id and user_id == u_id:
+                        del src_mac_list[index]
+                        ret = (i_dpid, pr, in_port, src, dest, eth_type, extra_match)
+                        break
+                if len(src_mac_list) == 0:
+                    self.del_flow(api_db, i_dpid, in_port, dest, src, eth_type)
+            if len(user_dict) == 0:
+                self._user_flows.pop(i_dpid, None)
+            if api_db is not None:
+                api_db.del_user_flow(i_dpid, user_id, id)
+        return ret
+
+    def add_flow(self, api_db, dpid, in_port, dest, src, eth_type, actions, priority, out_port, idle_timeout, hard_timeout, in_id = -1, user_id = None, extra_match = None):
         ret = True
 
         dp_dict = self._dps.setdefault(dpid, {})
@@ -199,33 +324,45 @@ class FlowStore(object):
             dest_mac_dict[temp_src] = []
             src_mac_list = dest_mac_dict[temp_src]
 
+        id = -1
         if len(src_mac_list) > 0:
-            for index, (id1, pr, eth_t, acts, o, i1, j1, nums) in enumerate(src_mac_list):
+            for index, (pr, id1, eth_t, acts, o, i1, j1, nums, u_id, ex_match) in enumerate(src_mac_list):
                 if eth_type is not None and eth_type != eth_t:
                     continue
-                if priority == pr and self._actions_equal(acts, actions):
+                if priority == pr and self._actions_equal(acts, actions) and user_id == u_id:
+                    if extra_match is not None or ex_match is not None:
+                        if self._compare_extra_match(ex_match, extra_match) is False:
+                            continue
                     ret = False
-                    src_mac_list[index] = (id1, pr, eth_t, acts, out_port, idle_timeout, hard_timeout, nums + 1)
-#                    LOG.info("updated : %s,%s,%s,%s,%s,%s,%s" % (priority, eth_t, actions, out_port, idle_timeout, hard_timeout, nums + 1))
+                    src_mac_list[index] = (pr, id1, eth_t, acts, out_port, idle_timeout, hard_timeout, nums + 1, u_id, ex_match)
+                    id = id1
+#                    LOG.info("updated : %s,%s,%s,\%s,%s,%s,%s" % (priority, eth_t, actions, out_port, idle_timeout, hard_timeout, nums + 1))
                     break
 
         if ret:
             if api_db is not None:
                 try:
-                    id = api_db.add_flow(str(hex(dpid)), in_port, dest, src, priority, eth_type, actions, out_port, idle_timeout, hard_timeout)
+                    id = api_db.add_flow(str(hex(dpid)), in_port, dest, src, priority, eth_type, actions, out_port, idle_timeout, hard_timeout, user_id, extra_match)
                 except:
                     id = -1
                     raise
+            else:
+                id = in_id
+
             if id > self.dpid_ids.get(dpid, 0):
                 self.dpid_ids[dpid] = id
             self.dpid_nums[dpid] = self.dpid_nums.get(dpid, 0) + 1
-            src_mac_list.append((id, priority, eth_type, actions, out_port, idle_timeout, hard_timeout, 1))
+            src_mac_list.append((priority, id, eth_type, actions, out_port, idle_timeout, hard_timeout, 1, user_id, extra_match))
+            src_mac_list.reverse()
+            if id > 0 and user_id is not None:
+                self._user_flows.setdefault(dpid, {})
+                self._user_flows[dpid][id] = (in_port, dest, src, eth_type, src_mac_list)
             if src is not None:
                 self.add_mac_flow(dpid, in_port, src, True, dest)
             self.add_mac_flow(dpid, in_port, dest, False, src)
  #          LOG.info("added : %s,%s,%s,%s,%s,%s,%s" % (priority, eth_type, actions, out_port, idle_timeout, hard_timeout, 1))
 
-        return ret
+        return id
 
     def del_flow(self, api_db, dpid, in_port, dest, src, eth_type):
         ret = False
@@ -247,10 +384,10 @@ class FlowStore(object):
                     if src is not None and src != sr:
                         continue
                     index_to_be_removed = []
-                    for index, (id, pr, eth_t, acts, out_ports, idle_timeout, hard_timeout, nums) in enumerate(src_mac_list):
+                    for index, (pr, id, eth_t, acts, out_ports, idle_timeout, hard_timeout, nums, user_id, extra_match) in enumerate(src_mac_list):
                         if eth_type is not None and eth_t != eth_type:
                             continue
-                        src_mac_list[index] = (id, pr, eth_t, acts, out_ports, idle_timeout, hard_timeout, nums - 1)
+                        src_mac_list[index] = (pr, id, eth_t, acts, out_ports, idle_timeout, hard_timeout, nums - 1, user_id, extra_match)
                         found = True
 #                        if (nums - 1) == 0:
                         ret = True
@@ -260,7 +397,13 @@ class FlowStore(object):
                             try:
                                 api_db.del_flow(str(hex(dpid)), in_p, dst, id)
                             except:
-                                raise
+                                traceback.print_exc()
+                                pass
+                        if user_id != None and id > 0:
+                            self._user_flows.setdefault(dpid, {})
+                            self._user_flows[dpid].pop(id, None)
+                            if len(self._user_flows[dpid]) == 0:
+                                del self._user_flows[dpid]
                     index_to_be_removed.reverse()
                     for index in index_to_be_removed:
                         del src_mac_list[index]
@@ -280,7 +423,7 @@ class FlowStore(object):
         for in_p in in_p_to_be_removed:
             del dp_dict[in_p]
 
-        if not found :
+        if not found:
             ret = True
 
         return ret

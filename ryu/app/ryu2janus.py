@@ -87,6 +87,81 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
         # gevent.killall(self.threads)
         gevent.joinall(self.threads)
 
+    def _install_user_flow(self, datapath, in_port, src, dst, eth_type, actions, priority, idle_timeout, hard_timeout, extra_match):
+        # src and dst are in str format
+        ofproto = datapath.ofproto
+        if LOG.getEffectiveLevel() == logging.DEBUG:
+            if len(actions) > 0:
+                act = "out to "
+                for action in actions:
+                    act += str(action.port) + ","
+            else:
+                act = "drop"
+            LOG.debug("installing user flow from port %s, src %s to dst %s, %s, action %s", in_port, src, dst, extra_match, act)
+        if actions is None:
+            actions = []
+
+        match = {}
+        match.update(extra_match)
+        match['in_port'] = in_port
+        if eth_type is not None:
+            match['dl_type'] = eth_type
+        if dst is not None:
+            match['dl_dst'] = dst
+        if src is not None:
+            match['dl_src'] = src
+
+        # install flow
+        """
+        rule = nx_match.ClsRule()
+        if in_port is not None:
+            rule.set_in_port(in_port)
+        if dst is not None:
+            rule.set_dl_dst(dst)
+        if src is not None:
+            rule.set_dl_src(src)
+        if eth_type is not None:
+            rule.set_dl_type(eth_type)
+        try:
+            if extra_match is not None:
+                tp_src = extra_match.get('tp_src', None)
+                tp_dst = extra_match.get('tp_dst', None)
+                nw_src = extra_match.get('nw_src', None)
+                nw_dst = extra_match.get('nw_dst', None)
+                nw_proto = extra_match.get('nw_proto', None)
+                if tp_src is not None:
+                    rule.set_tp_src(tp_src)
+                if tp_dst is not None:
+                    rule.set_tp_dst(tp_dst)
+                if nw_src is not None:
+                    rule.set_nw_src(mac.ipaddr_to_bin(nw_src))
+                if nw_dst is not None:
+                    rule.set_nw_dst(mac.ipaddr_to_bin(nw_dst))
+                if nw_proto is not None:
+                    rule.set_nw_proto(nw_proto)
+        except:
+            traceback.print_exc()
+            return
+        """
+        m = ofctl_v1_0.to_match(datapath, match)
+
+        flow_mod = datapath.ofproto_parser.OFPFlowMod(
+            datapath = datapath, match = m, cookie = 0,
+            command = datapath.ofproto.OFPFC_ADD, idle_timeout = idle_timeout,
+            hard_timeout = hard_timeout, priority = priority,
+            out_port = ofproto.OFPP_NONE, flags = ofproto.OFPFF_SEND_FLOW_REM, actions = actions)
+
+        datapath.send_msg(flow_mod)
+
+        """
+        datapath.send_flow_mod(
+            rule = rule, cookie = 0, command = datapath.ofproto.OFPFC_ADD,
+            idle_timeout = idle_timeout, hard_timeout = hard_timeout,
+            priority = priority,
+            buffer_id = 0xffffffff, out_port = ofproto.OFPP_NONE,
+            flags = ofproto.OFPFF_SEND_FLOW_REM, actions = actions)
+        """
+
     def _install_modflow(self, msg, in_port, src, dst = None, eth_type = None, actions = None,
                          priority = OFP_DEFAULT_PRIORITY,
                          idle_timeout = 0, hard_timeout = 0):
@@ -99,7 +174,7 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
                     act += str(action.port) + ","
             else:
                 act = "drop"
-            LOG.debug("installing flow from port %s, src %s to dst %s, action %s", msg.in_port, haddr_to_str(src), haddr_to_str(dst), act)
+            LOG.debug("installing flow from port %s, src %s to dst %s, action %s", in_port, haddr_to_str(src), haddr_to_str(dst), act)
         if actions is None:
             actions = []
 
@@ -303,6 +378,26 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
             self._forward2Controller(method, url, body, header)
             return
 
+        tp_sport = tp_dport = ip_proto = src_ip = dst_ip = None
+        if _eth_type == 0x800:
+#            print msg.data.encode( 'hex' )
+#            print repr( msg.data )
+#            print buffer( msg.data )
+
+            dummy1, ip_proto, dummy2, src_ip, dst_ip = struct.unpack_from('!BBHLL', buffer(msg.data), 22)
+            """
+            print '**********************'
+            print dummy1, ip_proto, dummy2, src_ip , dst_ip
+            print '**********************'
+            """
+            contents.set_nw_proto(ip_proto)
+            contents.set_nw_src(src_ip)
+            contents.set_nw_dest(dst_ip)
+            if ip_proto == inet.IPPROTO_TCP or ip_proto == inet.IPPROTO_UDP:
+                tp_sport, tp_dport = struct.unpack_from('!HH', buffer(msg.data), 34)
+                contents.set_tp_sport (tp_sport)
+                contents.set_tp_dport (tp_dport)
+
         r1 = self._packet_not_dhcp_request(datapath, datapath.id, int(msg.in_port), int(msg.buffer_id), dl_dst, dl_src, _eth_type, msg.data)
         if r1 == 1:
             (id, pr, eth_t, acts, out_ports,
@@ -310,7 +405,11 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
                 with_src) = self.flow_store.get_flow(
                                            datapath.id, msg.in_port,
                                             haddr_to_str(dl_src), haddr_to_str(dl_dst),
-                                            _eth_type)
+                                            _eth_type, nw_proto = ip_proto,
+                                            tp_src = tp_sport,
+                                            tp_dst = tp_dport,
+                                            nw_src = src_ip,
+                                            nw_dst = dst_ip)
             if pr is not None and acts is not None:
                 actions = ofctl_v1_0.to_actions(datapath, acts)
                 if with_src == 0:
@@ -332,25 +431,6 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
             # means already taken care of
             return
 
-
-        if _eth_type == 0x800:
-#            print msg.data.encode( 'hex' )
-#            print repr( msg.data )
-#            print buffer( msg.data )
-
-            dummy1, ip_proto, dummy2, src_ip, dst_ip = struct.unpack_from('!BBHLL', buffer(msg.data), 22)
-            """
-            print '**********************'
-            print dummy1, ip_proto, dummy2, src_ip , dst_ip
-            print '**********************'
-            """
-            contents.set_nw_proto(ip_proto)
-            contents.set_nw_src(src_ip)
-            contents.set_nw_dest(dst_ip)
-            if ip_proto == inet.IPPROTO_TCP or ip_proto == inet.IPPROTO_UDP:
-                tp_sport, tp_dport = struct.unpack_from('!HH', buffer(msg.data), 34)
-                contents.set_tp_sport (tp_sport)
-                contents.set_tp_dport (tp_dport)
 
         method = 'POST'
         body = {'of_event_id': JANEVENTS.JAN_EV_PACKETIN}
@@ -384,6 +464,15 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
 
         if ev.enter_leave:
             self.api_db.load_flows(str(hex(dp.id)), self.flow_store)
+            user_flow_dict = self.flow_store.get_user_flows(dp.id)
+            LOG.info('dp_handler %s user_flows loaded', len(user_flow_dict))
+            for (in_port, dest, src, eth_type, pr, acts, out_ports, idle_timeout, hard_timeout, user_id, extra_match) in user_flow_dict.values():
+                actions = ofctl_v1_0.to_actions(dp, acts)
+                if src == '0' or src is None:
+                    temp_src = None
+                else:
+                    temp_src = src
+                self._install_user_flow(dp, in_port, src, dest, eth_type, actions, pr, idle_timeout, hard_timeout, extra_match)
             # send any dhcp discovery message up to the controller
             """
             rule = nx_match.ClsRule()
