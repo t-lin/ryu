@@ -63,6 +63,18 @@ class FlowStore(object):
                 elif type == 'SET_DL_SRC':
                     if act.get('dl_src', -1) != acts2[index].get('dl_src', -2):
                         return False
+                elif type == 'SET_NW_SRC':
+                    if act.get('nw_src', -1) != acts2[index].get('nw_src', -2):
+                        return False
+                elif type == 'SET_NW_DST':
+                    if act.get('nw_dst', -1) != acts2[index].get('nw_dst', -2):
+                        return False
+                elif type == 'SET_TP_SRC':
+                    if act.get('tp_src', -1) != acts2[index].get('tp_src', -2):
+                        return False
+                elif type == 'SET_TP_DST':
+                    if act.get('tp_dst', -1) != acts2[index].get('tp_dst', -2):
+                        return False
                 else:
                     LOG.warn("unknown action in actions_equal %s", type)
                     return False

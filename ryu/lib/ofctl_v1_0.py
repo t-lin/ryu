@@ -27,7 +27,6 @@ LOG = logging.getLogger('ryu.lib.ofctl_v1_0')
 
 DEFAULT_TIMEOUT = 1.0  # TODO:XXX
 
-
 def to_actions(dp, acts):
     actions = []
     for a in acts:
@@ -49,6 +48,18 @@ def to_actions(dp, acts):
         elif action_type == 'SET_DL_DST':
             dl_dst = haddr_to_bin(a.get('dl_dst'))
             actions.append(dp.ofproto_parser.OFPActionSetDlDst(dl_dst))
+        elif action_type == 'SET_NW_DST':
+            nw_dst = haddr_to_bin(a.get('nw_dst'))
+            actions.append(dp.ofproto_parser.OFPActionSetNwDst(nw_dst))
+        elif action_type == 'SET_NW_SRC':
+            nw_src = haddr_to_bin(a.get('nw_src'))
+            actions.append(dp.ofproto_parser.OFPActionSetNwSrc(nw_src))
+        elif action_type == 'SET_TP_SRC':
+            tp_src = haddr_to_bin(a.get('tp_src'))
+            actions.append(dp.ofproto_parser.OFPActionSetTpSrc(tp_src))
+        elif action_type == 'SET_TP_DST':
+            tp_dst = haddr_to_bin(a.get('tp_dst'))
+            actions.append(dp.ofproto_parser.OFPActionSetTpDst(tp_dst))
         else:
             LOG.debug('Unknown action type')
 
@@ -72,6 +83,14 @@ def actions_to_str(acts):
             buf = 'SET_DL_SRC:' + haddr_to_str(a.dl_addr)
         elif action_type == ofproto_v1_0.OFPAT_SET_DL_DST:
             buf = 'SET_DL_DST:' + haddr_to_str(a.dl_addr)
+        elif action_type == ofproto_v1_0.OFPAT_SET_NW_DST:
+            buf = 'SET_NW_DST:' + ipaddr_to_str(a.nw_addr)
+        elif action_type == ofproto_v1_0.OFPAT_SET_NW_SRC:
+            buf = 'SET_NW_SRC:' + ipaddr_to_str(a.nw_addr)
+        elif action_type == ofproto_v1_0.OFPAT_SET_TP_DST:
+            buf = 'SET_TP_DST:' + str(a.tp)
+        elif action_type == ofproto_v1_0.OFPAT_SET_TP_SRC:
+            buf = 'SET_TP_SRC:' + str(a.tp)
         else:
             buf = 'UNKNOWN'
         actions.append(buf)
