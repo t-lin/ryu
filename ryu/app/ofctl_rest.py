@@ -164,7 +164,9 @@ class StatsController(ControllerBase):
     def mac_ip_del(self, req, dpid, port_no, mac, **_kwargs):
         try:
             LOG.info('mac_ip_del requested %s, %s, %s, %s', dpid, port_no, mac, req.body)
-            body = json.loads(req.body)
+            body = {}
+            if req.body is not None and len(req.body) > 0:
+                body = json.loads(req.body)
         except:
             traceback.print_exc()
             LOG.debug('invalid syntax %s', req.body)
