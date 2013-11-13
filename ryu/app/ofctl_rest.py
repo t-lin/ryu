@@ -177,15 +177,24 @@ class StatsController(ControllerBase):
         dpid_list = body.get('dpid_list', [])
         for id in dpid_list:
             dp = self.dpset.get(int(id))
-            cmd = dp.ofproto.OFPFC_DELETE
-            flow = {}
-            flow['match'] = {}
-            flow['match']['dl_src'] = mac
-            ofctl_v1_0.mod_flow_entry(dp, flow, cmd)
-            flow = {}
-            flow['match'] = {}
-            flow['match']['dl_dst'] = mac
-            ofctl_v1_0.mod_flow_entry(dp, flow, cmd)
+            if dp is None:
+                continue
+            try:
+                cmd = dp.ofproto.OFPFC_DELETE
+                flow = {}
+                flow['match'] = {}
+                flow['match']['dl_src'] = mac
+                ofctl_v1_0.mod_flow_entry(dp, flow, cmd)
+            except:
+                LOG.warn("exception in mac_ip_del dl_src")
+            try:
+                cmd = dp.ofproto.OFPFC_DELETE
+                flow = {}
+                flow['match'] = {}
+                flow['match']['dl_dst'] = mac
+                ofctl_v1_0.mod_flow_entry(dp, flow, cmd)
+            except:
+                LOG.warn("exception in mac_ip_del, dl_dst")
 
         ip = None
         try:
