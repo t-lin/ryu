@@ -39,7 +39,7 @@ LOG = logging.getLogger('ryu.controller.api_db')
 
 FLAGS = gflags.FLAGS
 gflags.DEFINE_string('api_db_url', 'mysql://root:iheartdatabases@' + \
-                        'localhost/ryu?charset=utf8', 'Ryu Database URL')
+                        'localhost/janus?charset=utf8', 'Ryu Database URL')
 
 # Save API calls that may affect the state of the controller
 # Can be re-loaded if controller crashes
@@ -50,7 +50,8 @@ class API_DB(object):
 
 #        self.db = SqlSoup(FLAGS.api_db_url)
 
-        self.db = create_engine('mysql://root:supersecret@localhost/janus?charset=utf8')
+        #self.db = create_engine('mysql://root:supersecret@localhost/janus?charset=utf8')
+        self.db = create_engine(FLAGS.api_db_url)
         self.db.echo = False
         meta = MetaData()
 
