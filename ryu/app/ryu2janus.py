@@ -221,7 +221,6 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
                 LOG.warning("Failed to Send to Janus: body = %s", body)
                 return
             pass
-        print "\n"
         if res.status in (httplib.OK,
                           httplib.CREATED,
                           httplib.ACCEPTED,

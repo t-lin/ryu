@@ -43,6 +43,7 @@ class FlowStore(object):
         self.dpid_ids = {}
         self.dpid_nums = {}
         self._dhcp_flow = {}
+        self._dhcp_mac_list = {}
         self._mac_flows_dict = {}
         self._user_flows = {}
 
@@ -230,11 +231,14 @@ class FlowStore(object):
         self._dhcp_flow.setdefault(dpid, {})
         self._dhcp_flow[dpid].setdefault(in_port, {})
         self._dhcp_flow[dpid][in_port][src] = actions
+        self._dhcp_mac_list[src] = (dpid, in_port)
         return
 
-    def del_dhcp_flow(self, dpid, in_port, src):
+    def del_dhcp_flow(self, src):
         try:
-            del self._dhcp_flow[dpid][in_port][src]
+            (d_id, port) = self._dhcp_mac_list.pop(src, (None, None))
+            if d_id and port:
+                del self._dhcp_flow[d_id][port][src]
         except:
             pass
 
@@ -445,7 +449,7 @@ class FlowStore(object):
         flows_list.append((dpid, port, src_or_dst, other_mac))
         return
 
-    def del_mac_flows(self, dpid, port_no, mac):
+    def del_mac_flows(self, mac):
         flows_list = self._mac_flows_dict.get(mac, None)
         if flows_list is not None:
             for (dp_id, port, src_or_dst, other_mac) in flows_list:

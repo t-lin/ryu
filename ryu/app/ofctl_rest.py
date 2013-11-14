@@ -198,11 +198,11 @@ class StatsController(ControllerBase):
 
         ip = None
         try:
-            self.flow_store.del_dhcp_flow(int(dpid), int(port_no), mac)
+            self.flow_store.del_dhcp_flow(mac)
         except:
             pass
         try:
-            self.flow_store.del_mac_flows(int(dpid), int(port_no), mac)
+            self.flow_store.del_mac_flows(mac)
         except:
             pass
         ip_bin = None
