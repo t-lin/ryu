@@ -567,18 +567,20 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
         src_ip = TPA
         LOG.info("arp packet: src = %s, dst = %s", mac.ipaddr_to_str(SPA), mac.ipaddr_to_str(TPA))
 
-        src_mac = self.mac2port.mac_ip_get(src_ip)
+        (src_mac, src_dpid, src_port) = self.mac2port.mac_ip_get(src_ip)
         if src_mac is not None:
+            out_port = msg.in_port
             self._drop_packet(msg)
-            mydata = ctypes.create_string_buffer(42)
-            struct.pack_into('!6s6sHHHbbH6s4s6s4s', mydata, 0, src, src_mac, _eth_type, HTYPE, PTYPE, HLEN, PLEN, 2, src_mac, src_ip, dst_mac, dst_ip)
+            if src_dpid is None or src_port is None or src_dpid != dpid or src_port != out_port:
+                mydata = ctypes.create_string_buffer(42)
+                struct.pack_into('!6s6sHHHbbH6s4s6s4s', mydata, 0, src, src_mac, _eth_type, HTYPE,
+                                 PTYPE, HLEN, PLEN, 2, src_mac, src_ip, dst_mac, dst_ip)
 
-            out_port = msg.in_port
-            LOG.info("handled arp packet: %s, %s, %s, %s requested by %s, %s", dpid, out_port, mac.haddr_to_str(src_mac), mac.ipaddr_to_str(src_ip),
-                     mac.haddr_to_str(src), mac.ipaddr_to_str(dst_ip))
-            out_port = msg.in_port
-            actions = [datapath.ofproto_parser.OFPActionOutput(out_port)]
-            datapath.send_packet_out(actions = actions, data = mydata)
+                LOG.info("handled arp packet: %s, %s, %s, %s requested by %s, %s", dpid, out_port,
+                         mac.haddr_to_str(src_mac), mac.ipaddr_to_str(src_ip),
+                         mac.haddr_to_str(src), mac.ipaddr_to_str(dst_ip))
+                actions = [datapath.ofproto_parser.OFPActionOutput(out_port)]
+                datapath.send_packet_out(actions = actions, data = mydata)
             return True
         return False
 
@@ -611,7 +613,7 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
                     if len(ip_to_mac_dict) > 0:
                         method = 'PUT'
                         new_dict = {}
-                        for ip, (mac, t) in ip_to_mac_dict.iteritems():
+                        for ip, (mac, t, dp, p) in ip_to_mac_dict.iteritems():
                             try:
                                 new_dict[ipaddr_to_str(ip)] = haddr_to_str(mac)
                             except:
@@ -627,5 +629,3 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
             except:
                 traceback.print_exc()
                 pass
-
-

@@ -153,7 +153,7 @@ class StatsController(ControllerBase):
         ip = body.get('ip', None)
         port_no = body.get('port_no', None)
         try:
-            self.mac2port.mac_ip_add(mac = haddr_to_bin(mac), ip = ipaddr_to_bin(ip))
+            self.mac2port.mac_ip_add(mac = haddr_to_bin(mac), ip = ipaddr_to_bin(ip), dpid = dpid, port = port)
         except ValueError:
             print 'Invalid ip address format. Check the ip you are registering: %s' % ip
             return Response(status = 500)
@@ -357,7 +357,7 @@ class PacketController(ControllerBase):
                 actions.append(datapath.ofproto_parser.OFPActionOutput(int(out_port)))
 
         if mydata is not None:
-            mydata = eval(mydata)
+            mydata = json.loads(mydata)
             src = mydata.get(event_contents.DL_SRC)
             dst = mydata.get(event_contents.DL_DST)
             _eth_type = mydata.get(event_contents.ETH_TYPE)
@@ -370,15 +370,20 @@ class PacketController(ControllerBase):
             SHA = mydata.get(event_contents.ARP_SHA)
             TPA = mydata.get(event_contents.ARP_TPA)
             THA = mydata.get(event_contents.ARP_THA)
-            self.mac2port.mac_ip_add(mac = haddr_to_bin(SHA), ip = ipaddr_to_bin(SPA))
-            mybuffer = ctypes.create_string_buffer(42)
+            src_dpid = mydata.get(event_contents.SRC_DPID, None)
+            src_port = mydata.get(event_contents.SRC_PORT, None)
+            dont_send = mydata.get(event_contents.DONT_SEND, False)
 
-            struct.pack_into('!6s6sHHHbbH6s4s6s4s',
-                             mybuffer, 0, haddr_to_bin(dst), haddr_to_bin(src),
-                             _eth_type, HTYPE, PTYPE, HLEN, PLEN, OPER,
-                             haddr_to_bin(SHA), ipaddr_to_bin(SPA),
-                             haddr_to_bin(THA), ipaddr_to_bin(TPA))
-            datapath.send_packet_out(actions = actions, data = mybuffer)
+            self.mac2port.mac_ip_add(mac = haddr_to_bin(SHA), ip = ipaddr_to_bin(SPA), dpid = src_dpid, port = src_port)
+            if not dont_send:
+                mybuffer = ctypes.create_string_buffer(42)
+
+                struct.pack_into('!6s6sHHHbbH6s4s6s4s',
+                                 mybuffer, 0, haddr_to_bin(dst), haddr_to_bin(src),
+                                 _eth_type, HTYPE, PTYPE, HLEN, PLEN, OPER,
+                                 haddr_to_bin(SHA), ipaddr_to_bin(SPA),
+                                 haddr_to_bin(THA), ipaddr_to_bin(TPA))
+                datapath.send_packet_out(actions = actions, data = mybuffer)
         else:
             datapath.send_packet_out(int(buffer_id), int(in_port), actions = actions, data = None)
             buffer_ids = self.flow_store.get_similar_pending_msgs(dpid, int(in_port), int(buffer_id))

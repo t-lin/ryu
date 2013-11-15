@@ -68,32 +68,34 @@ class MacToPortTable(object):
 
     def mac_ip_del(self, mac, ip = None):
         if ip is not None:
-            self._ip_to_mac.pop(ip, (None, None))
+            self._ip_to_mac.pop(ip, (None, None, None < None))
 
         ip1 = self._mac_to_ip.get(mac, None)
         self._mac_to_ip.pop(mac, None)
         if ip1 is not None:
-            self._ip_to_mac.pop(ip1, (None, None))
+            self._ip_to_mac.pop(ip1, (None, None, None, None))
             LOG.info('mac ip deleted %s, %s', haddr_to_str(mac), ipaddr_to_str(ip1))
         else:
             LOG.info('mac ip deleted %s', haddr_to_str(mac))
 
-    def mac_ip_add(self, mac, ip):
+    def mac_ip_add(self, mac, ip, dpid, port):
         if ip is not None:
-            self._ip_to_mac[ip] = (mac, time.time())
+            self._ip_to_mac[ip] = (mac, time.time(), dpid, port)
         if mac is not None:
             self._mac_to_ip[mac] = ip
         LOG.info('mac ip added %s, %s', haddr_to_str(mac), ipaddr_to_str(ip))
 
     def mac_ip_get(self, ip):
         mac = None
+        dpid = None
+        port = None
         if ip is not None:
-            (mac, time_stamp) = self._ip_to_mac.get(ip, (None, None))
+            (mac, time_stamp, dpid, port) = self._ip_to_mac.get(ip, (None, None, None, None))
             if mac is not None and time_stamp is not None:
                 if (time.time() - time_stamp) > ARP_TIMEOUT:
                     self.mac_ip_del(mac, ip)
                     mac = None
-        return mac
+        return (mac, dpid, port)
 
     def get_ip_to_mac_dict(self):
         return self._ip_to_mac
@@ -101,7 +103,7 @@ class MacToPortTable(object):
     def clear_old_entries_in_ip_mac(self):
         now = time.time()
         dict_copy = deepcopy(self._ip_to_mac)
-        for ip, (mac, time_stamp) in dict_copy.iteritems():
+        for ip, (mac, time_stamp, dpid, port) in dict_copy.iteritems():
              if (now - time_stamp) > ARP_TIMEOUT:
                  self.mac_ip_del(mac, ip)
 
