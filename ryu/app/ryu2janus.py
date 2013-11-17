@@ -57,6 +57,8 @@ OFI_UDP = 17
 BOOTP_CLIENT_PORT_PORT_NUMBER = 68
 OFP_DEFAULT_PRIORITY = 0x8000
 
+USER_FLOW_INSTALL_INTERVAL = 5 * 60
+
 class Ryu2JanusForwarding(app_manager.RyuApp):
     OFP_VERSIONS = [ofproto_v1_0.OFP_VERSION]
     _CONTEXTS = {
@@ -463,15 +465,7 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
 
         if ev.enter_leave:
             self.api_db.load_flows(str(hex(dp.id)), self.flow_store)
-            user_flow_dict = self.flow_store.get_user_flows(dp.id)
-            LOG.info('dp_handler %s user_flows loaded', len(user_flow_dict))
-            for (in_port, dest, src, eth_type, pr, acts, out_ports, idle_timeout, hard_timeout, user_id, extra_match) in user_flow_dict.values():
-                actions = ofctl_v1_0.to_actions(dp, acts)
-                if src == '0' or src is None:
-                    temp_src = None
-                else:
-                    temp_src = src
-                self._install_user_flow(dp, in_port, src, dest, eth_type, actions, pr, idle_timeout, hard_timeout, extra_match)
+            self._install_user_flows(dp, dp.id)
             # send any dhcp discovery message up to the controller
             """
             rule = nx_match.ClsRule()
@@ -591,6 +585,7 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
     def cleaning_loop(self):
         expire1 = time.time()
         expire2 = expire1
+        expire3 = expire1
         while self.is_active:
             try:
                 gevent.sleep(seconds = 15)
@@ -626,6 +621,25 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
                             LOG.info("FORWARDING FEATURES REPLY TO JANUS: body = %s", body)
                             self._forward2Controller(method, url, body, header)
 
+                if (time.time() - expire3) > USER_FLOW_INSTALL_INTERVAL:
+                    expire3 = time.time()
+                    dps = self.dpset.get_all()
+                    for (dpid, dp) in dps:
+                        self._install_user_flows(dp, dpid)
+
             except:
                 traceback.print_exc()
                 pass
+
+
+    def _install_user_flows(self, dp, dpid):
+        user_flow_dict = self.flow_store.get_user_flows(dpid)
+        LOG.info('dp_handler %s %s user_flows loaded', dpid, len(user_flow_dict))
+        for (in_port, dest, src, eth_type, pr, acts, out_ports, idle_timeout, hard_timeout, user_id, extra_match) in user_flow_dict.values():
+            actions = ofctl_v1_0.to_actions(dp, acts)
+            if src == '0' or src is None:
+                temp_src = None
+            else:
+                temp_src = src
+            self._install_user_flow(dp, in_port, src, dest, eth_type, actions, pr, idle_timeout, hard_timeout, extra_match)
+        return
