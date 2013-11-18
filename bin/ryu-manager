@@ -36,6 +36,7 @@ from ryu.base.app_manager import AppManager
 from ryu.controller import controller
 from ryu.controller import flowvisor_cli
 from ryu.controller import api_db
+from ryu.controller import admission_ctrl
 
 # TODO:
 #   Right now, we have our own patched copy of ovs python bindings
