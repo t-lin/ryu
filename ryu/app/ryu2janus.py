@@ -24,6 +24,7 @@ import ctypes
 import gevent
 import time
 import traceback
+import pika
 
 from ryu.base import app_manager
 from ryu.controller import mac_to_port
@@ -48,6 +49,11 @@ from netaddr import IPAddress
 FLAGS = gflags.FLAGS
 gflags.DEFINE_string('janus_host', '127.0.0.1', 'Janus host IP address')
 gflags.DEFINE_integer('janus_port', '8091', 'Janus admin API port')
+gflags.DEFINE_string('rabbit_user', '', 'Rabbit username')
+gflags.DEFINE_string('rabbit_password', '', 'Rabbit password')
+gflags.DEFINE_string('rabbit_host', '', 'Rabbit host')
+gflags.DEFINE_string('rabbit_enabled', 'False', 'ryu2janus rabbit feature')
+gflags.DEFINE_string('rest_enabled', 'True', 'ryu2janus restful feature')
 
 LOG = logging.getLogger('ryu.app.ryu2janus')
 
@@ -79,6 +85,17 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
         self.host = FLAGS.janus_host
         self.port = FLAGS.janus_port
         self.url_prefix = '/v1.0/events/0'
+
+        self.rabbit_user = FLAGS.rabbit_user
+        self.rabbit_password = FLAGS.rabbit_password
+        self.rabbit_host = FLAGS.rabbit_host
+        self.rabbit_enabled = FLAGS.rabbit_enabled
+        self.rest_enabled = FLAGS.rest_enabled
+        self.credentials = pika.PlainCredentials(self.rabbit_user, self.rabbit_password)
+        self.connection = pika.BlockingConnection(pika.ConnectionParameters(host=self.rabbit_host, credentials=self.credentials))
+        self.channel = self.connection.channel()
+        self.channel.exchange_declare(exchange='ryuRabbitEvents_exchange', type='fanout')
+
         self.flow_store = kwargs['flow_store']
         self.is_active = True
         self.threads = []
@@ -208,31 +225,47 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
 
     def _forward2Controller(self, method, url, body = None, headers = None):
 
-        try:
-            self._conn.request(method, url, body, headers)
-            res = self._conn.getresponse()
-            res.read()
-        except:
-            try:
-                LOG.info("Failed to Send to Janus first time: %s, %s, body = %s", method, url, body)
-                self._conn = httplib.HTTPConnection(self.host, self.port)
-                self._conn.request(method, url, body, headers)
-                res = self._conn.getresponse()
-                res.read()
-            except:
-                LOG.warning("Failed to Send to Janus: body = %s", body)
-                return
-            pass
-        if res.status in (httplib.OK,
-                          httplib.CREATED,
-                          httplib.ACCEPTED,
-                          httplib.NO_CONTENT):
-            return res
+        if self.rabbit_enabled == 'True':
+              self.insertInRabbit(body)
+        if self.rest_enabled == 'True':
+		try:
+		    self._conn.request(method, url, body, headers)
+		    res = self._conn.getresponse()
+		    res.read()
+		except:
+		    try:
+			LOG.info("Failed to Send to Janus first time: %s, %s, body = %s", method, url, body)
+			self._conn = httplib.HTTPConnection(self.host, self.port)
+                        self._conn.request(method, url, body, headers)
+                        res = self._conn.getresponse()
+			res.read()
+		    except:
+			LOG.warning("Failed to Send to Janus: body = %s", body)
+			return
+		    pass
+		if res.status in (httplib.OK,
+				  httplib.CREATED,
+				  httplib.ACCEPTED,
+				  httplib.NO_CONTENT):
+		    return res
 
-        raise httplib.HTTPException(
-            res, 'code %d reason %s' % (res.status, res.reason),
-            res.getheaders(), res.read())
+		raise httplib.HTTPException(
+		    res, 'code %d reason %s' % (res.status, res.reason),
+		    res.getheaders(), res.read())
 
+    def insertInRabbit(self, event):
+        LOG.info('\n\n....................in RYU2JANUS APP. RYU IS INSERTING INTO RABBIT - FOR JANUS TO CONSUME (NORTHBOUND)....................\n\n')
+        d = json.loads(event)
+        value = d['event']
+        body = json.dumps(value)
+        if self.connection.is_closed:
+            self.connection = pika.BlockingConnection(pika.ConnectionParameters(host=self.host, credentials=self.credentials))
+        if self.channel.is_closed:
+            self.channel.open()
+        self.channel.basic_publish(exchange='ryuRabbitEvents_exchange',
+                      routing_key='',
+                      body=body)
+        return
 
     @set_ev_cls(ofp_event.EventOFPPortStatus, MAIN_DISPATCHER)
     def _port_status_handler(self, ev):
