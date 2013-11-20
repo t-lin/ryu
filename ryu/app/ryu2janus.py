@@ -228,30 +228,30 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
         if self.rabbit_enabled == 'True':
               self.insertInRabbit(body)
         if self.rest_enabled == 'True':
-		try:
-		    self._conn.request(method, url, body, headers)
-		    res = self._conn.getresponse()
-		    res.read()
-		except:
-		    try:
-			LOG.info("Failed to Send to Janus first time: %s, %s, body = %s", method, url, body)
-			self._conn = httplib.HTTPConnection(self.host, self.port)
-                        self._conn.request(method, url, body, headers)
-                        res = self._conn.getresponse()
-			res.read()
-		    except:
-			LOG.warning("Failed to Send to Janus: body = %s", body)
-			return
-		    pass
-		if res.status in (httplib.OK,
-				  httplib.CREATED,
-				  httplib.ACCEPTED,
-				  httplib.NO_CONTENT):
-		    return res
+            try:
+                self._conn.request(method, url, body, headers)
+                res = self._conn.getresponse()
+                res.read()
+            except:
+                try:
+                    LOG.info("Failed to Send to Janus first time: %s, %s, body = %s", method, url, body)
+                    self._conn = httplib.HTTPConnection(self.host, self.port)
+                    self._conn.request(method, url, body, headers)
+                    res = self._conn.getresponse()
+                    res.read()
+                except:
+                    LOG.warning("Failed to Send to Janus: body = %s", body)
+                    return
+            pass
+            if res.status in (httplib.OK,
+                              httplib.CREATED,
+                              httplib.ACCEPTED,
+                              httplib.NO_CONTENT):
+                return res
 
-		raise httplib.HTTPException(
-		    res, 'code %d reason %s' % (res.status, res.reason),
-		    res.getheaders(), res.read())
+            raise httplib.HTTPException(
+                res, 'code %d reason %s' % (res.status, res.reason),
+                res.getheaders(), res.read())
 
     def insertInRabbit(self, event):
         LOG.info('\n\n....................in RYU2JANUS APP. RYU IS INSERTING INTO RABBIT - FOR JANUS TO CONSUME (NORTHBOUND)....................\n\n')
