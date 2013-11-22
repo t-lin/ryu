@@ -39,6 +39,7 @@ from ryu.lib.lldp import ETH_TYPE_LLDP, LLDP_MAC_NEAREST_BRIDGE
 from janus.network.of_controller.janus_of_consts import JANEVENTS, JANPORTREASONS
 from janus.network.of_controller.event_contents import EventContents
 from janus.network.of_controller.janus_of_consts import ARP_TIMEOUT, ARP_CLEANING_TIMER, ARP_AUDIT_TIMER
+from ryu.controller import admission_ctrl
 
 from dpkt.ntp import BROADCAST
 from ryu.ofproto import nx_match, inet
@@ -66,6 +67,7 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
         'flow_store': flow_store.FlowStore,
         'api_db': api_db.API_DB,
         'mac2port': mac_to_port.MacToPortTable,
+        'adm_ctrl': admission_ctrl.RateControl,
     }
 
     def __init__(self, *args, **kwargs):
@@ -73,6 +75,8 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
         self.mac2port = kwargs['mac2port']
         self.dpset = kwargs['dpset']
         self.api_db = kwargs.get('api_db', None)
+        self.adm_ctrl = kwargs['adm_ctrl']
+        self.dp_port2mac = {}
 
         # Janus address
         self._conn = None
@@ -324,6 +328,8 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):
+        ts = time.time()
+
         # print "My packet in handler"
         msg = ev.msg
         datapath = msg.datapath
@@ -375,6 +381,13 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
             header = {"Content-Type": "application/json"}
 
             url = self.url_prefix
+            
+            permitted = self.adm_ctrl.check_if_over_rate(datapath.id, msg.in_port, dl_src, dl_dst, ts)
+            if not permitted:
+                """Block port and send warning to janus"""
+                self.block_port(datapath, msg.in_port)
+                return
+
             LOG.info("FORWARDING PACKET TO JANUS: body = %s", body)
             self._forward2Controller(method, url, body, header)
             return
@@ -440,14 +453,31 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
         header = {"Content-Type": "application/json"}
 
         url = self.url_prefix
+        
+        permitted = self.adm_ctrl.check_if_over_rate(datapath.id, msg.in_port, dl_src, dl_dst, ts)
+        if not permitted:
+            """Block port and send warning to janus"""
+            self.block_port(datapath, msg.in_port)
+            return
+
         # LOG.info("FORWARDING PACKET TO JANUS: body = %s", body)
         self._forward2Controller(method, url, body, header)
+
+    def block_port (self, datapath, in_port):
+        port_mac = self.dp_port2mac[datapath.id][in_port]
+        port_block_msg = datapath.ofproto_parser.OFPPortMod(datapath, in_port, port_mac, 1, 1, 0)
+        datapath.send_msg(port_block_msg)
+        print "switch ", datapath.id , " Port ", in_port, " blocked!!"
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
         msg = ev.msg
         dpid = msg.datapath_id
         ports = msg.ports
+
+        for port_key in ports.keys():
+            dpid_dict = self.dp_port2mac.setdefault(dpid, {})
+            dpid_dict[port_key]=ports[port_key].hw_addr
 
         method = 'PUT'
         body = json.dumps({'event': {'of_event_id': JANEVENTS.JAN_EV_FEATURESREPLY,
@@ -516,10 +546,12 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
             output = ofproto_parser.OFPActionOutput(
                 ofproto.OFPP_CONTROLLER, max_len = 100)
             actions = [output]
+            """
             dp.send_flow_mod(
                 rule = rule, cookie = 0, command = ofproto.OFPFC_ADD,
                 idle_timeout = 0, hard_timeout = 0, actions = actions,
                 priority = OFP_DEFAULT_PRIORITY + 10000)
+            """
 
             # drop all other broadcast messages
             """
