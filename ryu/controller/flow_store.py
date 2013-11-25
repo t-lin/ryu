@@ -18,7 +18,7 @@ import time
 import socket, struct
 
 from ryu.exception import MacAddressDuplicated, MacAddressNotFound
-from ryu.lib.mac import haddr_to_str
+from ryu.lib.mac import haddr_to_str, ALL_MAC
 from ryu.ofproto import ofproto_v1_0
 from ryu.controller import api_db
 
@@ -30,6 +30,8 @@ FLOW_ACTIVE = 0
 FLOW_PENDING = 1
 
 FLOW_PENDING_TIME = 60
+
+ADM_CTRL_USER_ID = 'ADM_CTRL_USER_ID'
 
 class FlowStore(object):
 
@@ -46,6 +48,7 @@ class FlowStore(object):
         self._dhcp_mac_list = {}
         self._mac_flows_dict = {}
         self._user_flows = {}
+        self._blocked_macs = {}
 
     def _actions_equal(self, acts1, acts2):
         try:
@@ -161,6 +164,23 @@ class FlowStore(object):
             return self._dps
         return self._dps.get(dpid, {})
 
+    def _remove_from_port_block(dpid, in_port, src):
+        try:
+            self._blocked_macs[dpid][in_port].pop(src, None)
+        except:
+            pass
+
+    def _add_to_port_block(dpid, in_port, src):
+        self._blocked_macs.setdefaulT(dpid, {})
+        self._blocked_macs[dpid].setdefaulT(in_port, {})
+        self._blocked_macs[dpid][in_port][src] = True
+
+    def check_if_mac_blocked(self, dpid, in_port, mac):
+        try:
+            return self._blocked_macs[dpid][in_port].get(mac, False)
+        except:
+            return False
+
     def get_user_flows(self, dpid = None, user_id = None, req_id = None):
         if dpid is None:
             return self._user_flows
@@ -204,7 +224,6 @@ class FlowStore(object):
             temp_src = src
             with_source = 1
 
-        look_for_pending = False
         src_mac_list = dest_mac_dict.get(temp_src, [])
         for index, (pr, id, eth_t, acts, out_ports, idle_timeout, hard_timeout, nums, user_id, extra_match) in enumerate(src_mac_list):
             if eth_t is None or eth_type == eth_t:
@@ -305,6 +324,8 @@ class FlowStore(object):
         if api_db is not None and user_id is not None and id is not None:
             user_dict = self._user_flows.get(i_dpid, {})
             (in_port, dest, src, eth_type, src_mac_list) = user_dict.pop(id, (None, None, None, None, None))
+            if user_id == ADM_CTRL_USER_ID and dest == ALL_MAC and src:
+                self._remove_from_port_block(i_dpid, in_port, src)
             if src_mac_list is not None and len(src_mac_list) > 0:
                 for index, (pr, id1, eth_t, acts, o, i1, j1, nums, u_id, extra_match) in enumerate(src_mac_list):
                     if id1 == id and user_id == u_id:
@@ -365,6 +386,8 @@ class FlowStore(object):
             else:
                 id = in_id
 
+            if user_id == ADM_CTRL_USER_ID and dest == ALL_MAC and src:
+                self._add_to_port_block(dpid, in_port, src)
             if id > self.dpid_ids.get(dpid, 0):
                 self.dpid_ids[dpid] = id
             self.dpid_nums[dpid] = self.dpid_nums.get(dpid, 0) + 1
@@ -415,7 +438,9 @@ class FlowStore(object):
                             except:
                                 traceback.print_exc()
                                 pass
-                        if user_id != None and id > 0:
+                        if user_id and id > 0:
+                            if user_id == ADM_CTRL_USER_ID and dest == ALL_MAC and src:
+                                self._remove_from_port_block(dpid, in_port, src)
                             self._user_flows.setdefault(dpid, {})
                             self._user_flows[dpid].pop(id, None)
                             if len(self._user_flows[dpid]) == 0:

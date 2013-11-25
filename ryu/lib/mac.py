@@ -16,6 +16,7 @@
 
 import itertools
 
+ALL_MAC = 'ALL'
 # string representation
 HADDR_PATTERN = r'([0-9a-f]{2}:){5}[0-9a-f]{2}'
 

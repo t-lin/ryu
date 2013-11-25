@@ -34,10 +34,10 @@ from ryu.controller import api_db
 from ryu.controller import mac_to_port
 from ryu.ofproto import ofproto_v1_0
 from ryu.lib import ofctl_v1_0
-from ryu.lib.mac import haddr_to_bin, ipaddr_to_bin
+from ryu.lib.mac import haddr_to_bin, ipaddr_to_bin, ALL_MAC
 from ryu.app.wsgi import ControllerBase, WSGIApplication
 from janus.network.of_controller import event_contents
-
+from ryu.controller import admission_ctrl
 
 LOG = logging.getLogger('ryu.app.ofctl_rest')
 
@@ -75,6 +75,7 @@ class StatsController(ControllerBase):
         self.flow_store = data.get('flow_store', None)
         self.mac2port = data.get('mac2port', None)
         self.api_db = data.get('api_db', None)
+        self.adm_ctrl = data.get('adm_ctrl', None)
         assert self.mac2port is not None
         assert self.flow_store is not None
         assert self.api_db is not None
@@ -175,6 +176,11 @@ class StatsController(ControllerBase):
         if ip == '0.0.0.0':
             ip = None
         dpid_list = body.get('dpid_list', [])
+        try:
+            if self.adm_ctrl:
+                self.adm_ctrl.mac_deleted(mac)
+        except:
+            pass
         for id in dpid_list:
             dp = self.dpset.get(int(id))
             if dp is None:
@@ -294,7 +300,8 @@ class StatsController(ControllerBase):
                     flow['match'] = {}
                     flow['match']['in_port'] = in_port
                     flow['match']['dl_src'] = src
-                    flow['match']['dl_dst'] = dst
+                    if dst != ALL_MAC:
+                        flow['match']['dl_dst'] = dst
                     flow['match']['eth_type'] = eth_type
                     flow['match'].update(extra_match)
                     ofctl_v1_0.mod_flow_entry(dp, flow, dp.ofproto.OFPFC_DELETE)
@@ -421,7 +428,8 @@ class RestStatsApi(app_manager.RyuApp):
         'wsgi': WSGIApplication,
         'flow_store': flow_store.FlowStore,
         'mac2port': mac_to_port.MacToPortTable,
-        'api_db': api_db.API_DB
+        'api_db': api_db.API_DB,
+        'adm_ctrl': admission_ctrl.RateControl
     }
 
     def __init__(self, *args, **kwargs):
@@ -430,6 +438,7 @@ class RestStatsApi(app_manager.RyuApp):
         self.flow_store = kwargs['flow_store']
         self.mac2port = kwargs['mac2port']
         self.api_db = kwargs['api_db']
+        self.adm_ctrl = kwargs['adm_ctrl']
         wsgi = kwargs['wsgi']
         self.waiters = {}
         self.data = {}
@@ -438,6 +447,7 @@ class RestStatsApi(app_manager.RyuApp):
         self.data['flow_store'] = self.flow_store
         self.data['mac2port'] = self.mac2port
         self.data['api_db'] = self.api_db
+        self.data['adm_ctrl'] = self.adm_ctrl
         mapper = wsgi.mapper
 
         wsgi.registory['StatsController'] = self.data

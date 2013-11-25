@@ -1,6 +1,5 @@
-# vim: tabstop=4 shiftwidth=4 softtabstop=4
-#
-# Copyright (C) 2013, The SAVI Project.
+#-------------------------------------------------------------------------------
+# Copyright 2013 University of Toronto
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,6 +13,8 @@
 # implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+#
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
 
 import logging
 import struct
@@ -34,7 +35,7 @@ from ryu.controller import dpset
 from ryu.controller import flow_store
 from ryu.controller import api_db
 from ryu.ofproto import ofproto_v1_0
-from ryu.lib.mac import haddr_to_str, ipaddr_to_str, is_multicast
+from ryu.lib.mac import haddr_to_str, ipaddr_to_str, is_multicast, ALL_MAC
 from ryu.lib.lldp import ETH_TYPE_LLDP, LLDP_MAC_NEAREST_BRIDGE
 from janus.network.of_controller.janus_of_consts import JANEVENTS, JANPORTREASONS
 from janus.network.of_controller.event_contents import EventContents
@@ -57,6 +58,7 @@ OFI_ETH_TYPE_ARP = 0x806
 OFI_UDP = 17
 BOOTP_CLIENT_PORT_PORT_NUMBER = 68
 OFP_DEFAULT_PRIORITY = 0x8000
+OFP_MAX_PRIORITY = 0xffff
 
 USER_FLOW_INSTALL_INTERVAL = 5 * 60
 
@@ -112,7 +114,7 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
         match['in_port'] = in_port
         if eth_type is not None:
             match['dl_type'] = eth_type
-        if dst is not None:
+        if dst is not None and dst != ALL_MAC:
             match['dl_dst'] = dst
         if src is not None:
             match['dl_src'] = src
@@ -188,7 +190,7 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
         rule = nx_match.ClsRule()
         if in_port is not None:
             rule.set_in_port(in_port)
-        if dst is not None:
+        if dst is not None and dst != ALL_MAC:
             rule.set_dl_dst(dst)
         if src is not None:
             rule.set_dl_src(src)
@@ -344,6 +346,10 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
             # Don't forward LLDP packets to Janus
             return
 
+        if self.flow_store.check_if_mac_blocked(datapath.id, msg.in_port, haddr_to_str(dl_src)):
+            self._modflow_and_drop_packet(msg, dl_src, None, OFP_MAX_PRIORITY, idle_timeout = 0)
+            return
+
         if dl_dst != mac.BROADCAST and is_multicast(dl_dst):
             # drop and install rule to drop
             self._modflow_and_drop_packet(msg, None, dl_dst, OFP_DEFAULT_PRIORITY + 25000, idle_timeout = 360)
@@ -376,17 +382,16 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
 
             method = 'POST'
             body = {'of_event_id': JANEVENTS.JAN_EV_PACKETIN}
+            permitted = self.adm_ctrl.check_if_over_rate(datapath.id, msg.in_port, dl_src, ts)
+            if not permitted:
+                """send warning to janus"""
+                contents.set_ac_warn(True)
+
             body.update(contents.getContents())
             body = json.dumps({'event': body})
             header = {"Content-Type": "application/json"}
 
             url = self.url_prefix
-            
-            permitted = self.adm_ctrl.check_if_over_rate(datapath.id, msg.in_port, dl_src, dl_dst, ts)
-            if not permitted:
-                """Block port and send warning to janus"""
-                self.block_port(datapath, msg.in_port)
-                return
 
             LOG.info("FORWARDING PACKET TO JANUS: body = %s", body)
             self._forward2Controller(method, url, body, header)
@@ -445,6 +450,10 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
             # means already taken care of
             return
 
+        permitted = self.adm_ctrl.check_if_over_rate(datapath.id, msg.in_port, dl_src, ts)
+        if not permitted:
+            """send warning to janus"""
+            contents.set_ac_warn(True)
 
         method = 'POST'
         body = {'of_event_id': JANEVENTS.JAN_EV_PACKETIN}
@@ -452,15 +461,8 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
         body = json.dumps({'event': body})
         header = {"Content-Type": "application/json"}
 
-        url = self.url_prefix
-        
-        permitted = self.adm_ctrl.check_if_over_rate(datapath.id, msg.in_port, dl_src, dl_dst, ts)
-        if not permitted:
-            """Block port and send warning to janus"""
-            self.block_port(datapath, msg.in_port)
-            return
-
         # LOG.info("FORWARDING PACKET TO JANUS: body = %s", body)
+        url = self.url_prefix
         self._forward2Controller(method, url, body, header)
 
     def block_port (self, datapath, in_port):
@@ -477,7 +479,7 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
 
         for port_key in ports.keys():
             dpid_dict = self.dp_port2mac.setdefault(dpid, {})
-            dpid_dict[port_key]=ports[port_key].hw_addr
+            dpid_dict[port_key] = ports[port_key].hw_addr
 
         method = 'PUT'
         body = json.dumps({'event': {'of_event_id': JANEVENTS.JAN_EV_FEATURESREPLY,
