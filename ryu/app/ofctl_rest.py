@@ -303,7 +303,8 @@ class StatsController(ControllerBase):
                     if dst != ALL_MAC:
                         flow['match']['dl_dst'] = dst
                     flow['match']['eth_type'] = eth_type
-                    flow['match'].update(extra_match)
+                    if extra_match is not None:
+                        flow['match'].update(extra_match)
                     ofctl_v1_0.mod_flow_entry(dp, flow, dp.ofproto.OFPFC_DELETE)
         except:
             traceback.print_exc()

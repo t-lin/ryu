@@ -110,7 +110,8 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
             actions = []
 
         match = {}
-        match.update(extra_match)
+        if extra_match is not None:
+            match.update(extra_match)
         match['in_port'] = in_port
         if eth_type is not None:
             match['dl_type'] = eth_type

@@ -164,15 +164,15 @@ class FlowStore(object):
             return self._dps
         return self._dps.get(dpid, {})
 
-    def _remove_from_port_block(dpid, in_port, src):
+    def _remove_from_port_block(self,dpid, in_port, src):
         try:
             self._blocked_macs[dpid][in_port].pop(src, None)
         except:
             pass
 
-    def _add_to_port_block(dpid, in_port, src):
-        self._blocked_macs.setdefaulT(dpid, {})
-        self._blocked_macs[dpid].setdefaulT(in_port, {})
+    def _add_to_port_block(self, dpid, in_port, src):
+        self._blocked_macs.setdefault(dpid, {})
+        self._blocked_macs[dpid].setdefault(in_port, {})
         self._blocked_macs[dpid][in_port][src] = True
 
     def check_if_mac_blocked(self, dpid, in_port, mac):
