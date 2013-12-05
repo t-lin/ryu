@@ -212,6 +212,8 @@ def get_desc_stats(dp, waiters):
     msgs = []
     send_stats_request(dp, stats, waiters, msgs)
 
+    s = None
+    desc = {}
     for msg in msgs:
         stats = msg.body
         s = {'mfr_desc': stats.mfr_desc,
@@ -220,7 +222,8 @@ def get_desc_stats(dp, waiters):
              'serial_num': stats.serial_num,
              'dp_desc': stats.dp_desc}
 #    desc = {str(dp.id): s}
-    desc = {dpid_to_str(dp.id): s}
+    if s:
+        desc = {dpid_to_str(dp.id): s}
     return desc
 
 

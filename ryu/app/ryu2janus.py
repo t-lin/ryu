@@ -57,6 +57,7 @@ OFI_ETH_TYPE_IP = 2048
 OFI_ETH_TYPE_ARP = 0x806
 OFI_UDP = 17
 BOOTP_CLIENT_PORT_PORT_NUMBER = 68
+BOOTP_SERVER_PORT_PORT_NUMBER = 67
 OFP_DEFAULT_PRIORITY = 0x8000
 OFP_MAX_PRIORITY = 0xffff
 
@@ -519,12 +520,12 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
             flow['dl_dst'] = 'ff:ff:ff:ff:ff:ff'
             flow['dl_type'] = OFI_ETH_TYPE_IP
             flow['nw_proto'] = inet.IPPROTO_UDP
-            flow['nw_dst'] = "0.0.0.0/32"
             flow['tp_src'] = BOOTP_CLIENT_PORT_PORT_NUMBER
+            flow['tp_dst'] = BOOTP_SERVER_PORT_PORT_NUMBER
             match = ofctl_v1_0.to_match(dp, flow)
-            priority = OFP_DEFAULT_PRIORITY + 12000
+            priority = OFP_DEFAULT_PRIORITY + 10
             out_port = int(flow.get('out_port', ofproto_v1_0.OFPP_NONE))
-            """
+
             flow_mod = dp.ofproto_parser.OFPFlowMod(
                 datapath = dp, match = match, cookie = 0,
                 command = ofproto.OFPFC_ADD, idle_timeout = 0,
@@ -532,7 +533,22 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
                 flags = 0, actions = actions, out_port = out_port)
 
             dp.send_msg(flow_mod)
-            """
+
+
+            flow = {}
+            flow['dl_dst'] = 'ff:ff:ff:ff:ff:ff'
+            flow['dl_type'] = OFI_ETH_TYPE_ARP
+            match = ofctl_v1_0.to_match(dp, flow)
+            priority = OFP_DEFAULT_PRIORITY + 10
+            out_port = int(flow.get('out_port', ofproto_v1_0.OFPP_NONE))
+
+            flow_mod = dp.ofproto_parser.OFPFlowMod(
+                datapath = dp, match = match, cookie = 0,
+                command = ofproto.OFPFC_ADD, idle_timeout = 0,
+                hard_timeout = 0, priority = priority,
+                flags = 0, actions = actions, out_port = out_port)
+
+            dp.send_msg(flow_mod)
 
             """
             dp.send_flow_mod(
