@@ -58,7 +58,7 @@ class OpenFlowController(object):
 
     # entry point
     def __call__(self):
-        #LOG.debug('call')
+        # LOG.debug('call')
         self.server_loop()
 
     def server_loop(self):
@@ -67,24 +67,24 @@ class OpenFlowController(object):
                 server = StreamServer((FLAGS.ofp_listen_host,
                                        FLAGS.ofp_ssl_listen_port),
                                       datapath_connection_factory,
-                                      keyfile=FLAGS.ctl_privkey,
-                                      certfile=FLAGS.ctl_cert,
-                                      cert_reqs=ssl.CERT_REQUIRED,
-                                      ca_certs=FLAGS.ca_certs,
-                                      ssl_version=ssl.PROTOCOL_TLSv1)
+                                      keyfile = FLAGS.ctl_privkey,
+                                      certfile = FLAGS.ctl_cert,
+                                      cert_reqs = ssl.CERT_REQUIRED,
+                                      ca_certs = FLAGS.ca_certs,
+                                      ssl_version = ssl.PROTOCOL_TLSv1)
             else:
                 server = StreamServer((FLAGS.ofp_listen_host,
                                        FLAGS.ofp_ssl_listen_port),
                                       datapath_connection_factory,
-                                      keyfile=FLAGS.ctl_privkey,
-                                      certfile=FLAGS.ctl_cert,
-                                      ssl_version=ssl.PROTOCOL_TLSv1)
+                                      keyfile = FLAGS.ctl_privkey,
+                                      certfile = FLAGS.ctl_cert,
+                                      ssl_version = ssl.PROTOCOL_TLSv1)
         else:
             server = StreamServer((FLAGS.ofp_listen_host,
                                    FLAGS.ofp_tcp_listen_port),
                                   datapath_connection_factory)
 
-        #LOG.debug('loop')
+        # LOG.debug('loop')
         server.serve_forever()
 
 
@@ -167,7 +167,7 @@ class Datapath(object):
 
                 msg = ofproto_parser.msg(self,
                                          version, msg_type, msg_len, xid, buf)
-                #LOG.debug('queue msg %s cls %s', msg, msg.__class__)
+                # LOG.debug('queue msg %s cls %s', msg, msg.__class__)
                 self.ev_q.queue(ofp_event.ofp_msg_to_ev(msg))
 
                 buf = buf[required_len:]
@@ -194,6 +194,7 @@ class Datapath(object):
     def set_xid(self, msg):
         self.xid += 1
         self.xid &= self.ofproto.MAX_XID
+        # print "xid is %s" % self.xid
         msg.set_xid(self.xid)
         return self.xid
 
@@ -219,14 +220,14 @@ class Datapath(object):
             gevent.joinall([send_thr])
 
     def send_ev(self, ev):
-        #LOG.debug('send_ev %s', ev)
+        # LOG.debug('send_ev %s', ev)
         self.ev_q.queue(ev)
 
     #
     # Utility methods for convenience
     #
-    def send_packet_out(self, buffer_id=0xffffffff, in_port=None,
-                        actions=None, data=None):
+    def send_packet_out(self, buffer_id = 0xffffffff, in_port = None,
+                        actions = None, data = None):
         if in_port is None:
             in_port = self.ofproto.OFPP_NONE
         packet_out = self.ofproto_parser.OFPPacketOut(
@@ -234,8 +235,8 @@ class Datapath(object):
         self.send_msg(packet_out)
 
     def send_flow_mod(self, rule, cookie, command, idle_timeout, hard_timeout,
-                      priority=None, buffer_id=0xffffffff,
-                      out_port=None, flags=0, actions=None):
+                      priority = None, buffer_id = 0xffffffff,
+                      out_port = None, flags = 0, actions = None):
         if priority is None:
             priority = self.ofproto.OFP_DEFAULT_PRIORITY
         if out_port is None:
@@ -257,18 +258,18 @@ class Datapath(object):
                 priority, buffer_id, out_port, flags, rule, actions)
         self.send_msg(flow_mod)
 
-    def send_flow_del(self, rule, cookie, out_port=None):
-        self.send_flow_mod(rule=rule, cookie=cookie,
-                           command=self.ofproto.OFPFC_DELETE,
-                           idle_timeout=0, hard_timeout=0, priority=0,
-                           out_port=out_port)
+    def send_flow_del(self, rule, cookie, out_port = None):
+        self.send_flow_mod(rule = rule, cookie = cookie,
+                           command = self.ofproto.OFPFC_DELETE,
+                           idle_timeout = 0, hard_timeout = 0, priority = 0,
+                           out_port = out_port)
 
     def send_delete_all_flows(self):
         rule = nx_match.ClsRule()
         self.send_flow_mod(
-            rule=rule, cookie=0, command=self.ofproto.OFPFC_DELETE,
-            idle_timeout=0, hard_timeout=0, priority=0, buffer_id=0,
-            out_port=self.ofproto.OFPP_NONE, flags=0, actions=None)
+            rule = rule, cookie = 0, command = self.ofproto.OFPFC_DELETE,
+            idle_timeout = 0, hard_timeout = 0, priority = 0, buffer_id = 0,
+            out_port = self.ofproto.OFPP_NONE, flags = 0, actions = None)
 
     def send_barrier(self):
         barrier_request = self.ofproto_parser.OFPBarrierRequest(self)

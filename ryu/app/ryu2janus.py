@@ -54,8 +54,12 @@ gflags.DEFINE_integer('janus_port', '8091', 'Janus admin API port')
 gflags.DEFINE_string('rabbit_user', '', 'Rabbit username')
 gflags.DEFINE_string('rabbit_password', '', 'Rabbit password')
 gflags.DEFINE_string('rabbit_host', '', 'Rabbit host')
-gflags.DEFINE_string('rabbit_enabled', 'False', 'ryu2janus rabbit feature')
-gflags.DEFINE_string('rest_enabled', 'True', 'ryu2janus restful feature')
+gflags.DEFINE_bool('rabbit_enabled', False, 'ryu2janus rabbit feature')
+gflags.DEFINE_bool('rest_enabled', True, 'ryu2janus restful feature')
+gflags.DEFINE_bool('second_janus', False, 'Second Janus ENABLED')
+gflags.DEFINE_string('dpid_file', None, 'dpid file name')
+gflags.DEFINE_string('second_janus_host', '127.0.0.1', 'Second Janus host IP address')
+gflags.DEFINE_integer('second_janus_port', '8091', 'Second Janus admin API port')
 
 LOG = logging.getLogger('ryu.app.ryu2janus')
 
@@ -69,6 +73,7 @@ OFP_MAX_PRIORITY = 0xffff
 
 USER_FLOW_INSTALL_INTERVAL = 5 * 60
 
+ALL_PORTS = -1
 class Ryu2JanusForwarding(app_manager.RyuApp):
     OFP_VERSIONS = [ofproto_v1_0.OFP_VERSION]
     _CONTEXTS = {
@@ -92,6 +97,18 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
         self.host = FLAGS.janus_host
         self.port = FLAGS.janus_port
         self.url_prefix = '/v1.0/events/0'
+        self.second_janus = FLAGS.second_janus
+        self.second_host = FLAGS.second_janus_host
+        self.second_port = FLAGS.second_janus_port
+        self.second_dpids = {}
+        if self.second_janus and self.second_host and self.second_port:
+            in_file = FLAGS.dpid_file
+            if in_file and len(in_file) > 0:
+                try:
+                    with open(in_file) as in_f:
+                        self.second_dpids = json.load(in_f)
+                except:
+                    self.second_janus = False
 
         self.rabbit_user = FLAGS.rabbit_user
         self.rabbit_password = FLAGS.rabbit_password
@@ -99,9 +116,9 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
         self.rabbit_enabled = FLAGS.rabbit_enabled
         self.rest_enabled = FLAGS.rest_enabled
         self.credentials = pika.PlainCredentials(self.rabbit_user, self.rabbit_password)
-        self.connection = pika.BlockingConnection(pika.ConnectionParameters(host=self.rabbit_host, credentials=self.credentials))
+        self.connection = pika.BlockingConnection(pika.ConnectionParameters(host = self.rabbit_host, credentials = self.credentials))
         self.channel = self.connection.channel()
-        self.channel.exchange_declare(exchange='ryuRabbitEvents_exchange', type='fanout')
+        self.channel.exchange_declare(exchange = 'ryuRabbitEvents_exchange', type = 'fanout')
 
         self.flow_store = kwargs['flow_store']
         self.is_active = True
@@ -231,11 +248,20 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
         self._install_modflow(msg, in_port, src, dst, actions = [], priority = priority, idle_timeout = idle_timeout)
         datapath.send_packet_out(msg.buffer_id, in_port, [])
 
-    def _forward2Controller(self, method, url, body = None, headers = None):
+    def _forward2Controller(self, dpid, port_no, method, url, body = None, headers = None):
 
-        if self.rabbit_enabled == 'True':
+        if self.rabbit_enabled:
               self.insertInRabbit(body)
-        if self.rest_enabled == 'True':
+        host = self.host
+        port = self.port
+        if self.second_janus and dpid and port_no and dpid in self.second_dpids:
+            if port_no in self.second_dpids[dpid]:
+                host = self.second_host
+                port = self.second_port
+            elif port_no == ALL_PORTS:
+                self._forward2Controller(dpid, self.second_dpids[dpid][0], method, url, body, headers)
+
+        if self.rest_enabled:
             try:
                 self._conn.request(method, url, body, headers)
                 res = self._conn.getresponse()
@@ -267,12 +293,12 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
         value = d['event']
         body = json.dumps(value)
         if self.connection.is_closed:
-            self.connection = pika.BlockingConnection(pika.ConnectionParameters(host=self.host, credentials=self.credentials))
+            self.connection = pika.BlockingConnection(pika.ConnectionParameters(host = self.host, credentials = self.credentials))
         if self.channel.is_closed:
             self.channel.open()
-        self.channel.basic_publish(exchange='ryuRabbitEvents_exchange',
-                      routing_key='',
-                      body=body)
+        self.channel.basic_publish(exchange = 'ryuRabbitEvents_exchange',
+                      routing_key = '',
+                      body = body)
         return
 
     @set_ev_cls(ofp_event.EventOFPPortStatus, MAIN_DISPATCHER)
@@ -309,7 +335,7 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
 
         url = self.url_prefix
         LOG.info("FORWARDING PORT STATUS TO JANUS: body = %s", body)
-        self._forward2Controller(method, url, body, header)
+        self._forward2Controller(msg.datapath.id, port_no, method, url, body, header)
 
     def _packet_not_dhcp_request(self, dp, dpid, in_port, buffer_id, dl_dst, dl_src, eth_type, data):
         if dl_dst == mac.BROADCAST and eth_type == 0x800:
@@ -429,7 +455,7 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
             url = self.url_prefix
 
             LOG.info("FORWARDING PACKET TO JANUS: body = %s", body)
-            self._forward2Controller(method, url, body, header)
+            self._forward2Controller(datapath.id, msg.in_port, method, url, body, header)
             return
 
         tp_sport = tp_dport = ip_proto = src_ip = dst_ip = None
@@ -498,7 +524,7 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
 
         # LOG.info("FORWARDING PACKET TO JANUS: body = %s", body)
         url = self.url_prefix
-        self._forward2Controller(method, url, body, header)
+        self._forward2Controller(datapath.id, msg.in_port, method, url, body, header)
 
     def block_port (self, datapath, in_port):
         port_mac = self.dp_port2mac[datapath.id][in_port]
@@ -523,7 +549,7 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
 
         url = self.url_prefix
         LOG.info("FORWARDING FEATURES REPLY TO JANUS: body = %s", body)
-        self._forward2Controller(method, url, body, header)
+        self._forward2Controller(dpid, ALL_PORTS, method, url, body, header)
 
     @set_ev_cls(dpset.EventDP, dpset.DPSET_EV_DISPATCHER)
     def dp_handler(self, ev):
@@ -628,7 +654,7 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
 
         url = self.url_prefix
         LOG.info("FORWARDING DP EVENT TO JANUS: body = %s", body)
-        self._forward2Controller(method, url, body, header)
+        self._forward2Controller(dpid, ALL_PORTS, method, url, body, header)
 
     def _handle_arp_packets(self, msg, dst, src, _eth_type, HTYPE, PTYPE, HLEN, PLEN,
                                         OPER, SHA, SPA, THA, TPA):
@@ -703,7 +729,7 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
 
                             url = self.url_prefix
                             LOG.info("FORWARDING FEATURES REPLY TO JANUS: body = %s", body)
-                            self._forward2Controller(method, url, body, header)
+                            self._forward2Controller(None, None, method, url, body, header)
 
                 if (time.time() - expire3) > USER_FLOW_INSTALL_INTERVAL:
                     expire3 = time.time()

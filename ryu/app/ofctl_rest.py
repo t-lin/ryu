@@ -103,9 +103,14 @@ class StatsController(ControllerBase):
         dp = self.dpset.get(int(dpid))
         if dp is None:
             return Response(status = 404)
+        try:
+            flow = eval(req.body)
+        except:
+            flow = {}
+            pass
 
         if dp.ofproto.OFP_VERSION == ofproto_v1_0.OFP_VERSION:
-            flows = ofctl_v1_0.get_flow_stats(dp, self.waiters)
+            flows = ofctl_v1_0.get_flow_stats(dp, flow, self.waiters)
         else:
             LOG.debug('Unsupported OF protocol')
             return Response(status = 501)
@@ -369,29 +374,37 @@ class PacketController(ControllerBase):
             src = mydata.get(event_contents.DL_SRC)
             dst = mydata.get(event_contents.DL_DST)
             _eth_type = mydata.get(event_contents.ETH_TYPE)
-            HTYPE = mydata.get(event_contents.ARP_HTYPE)
-            PTYPE = mydata.get(event_contents.ARP_PTYPE)
-            HLEN = mydata.get(event_contents.ARP_HLEN)
-            PLEN = mydata.get(event_contents.ARP_PLEN)
-            OPER = mydata.get(event_contents.ARP_OPER)
-            SPA = mydata.get(event_contents.ARP_SPA)
-            SHA = mydata.get(event_contents.ARP_SHA)
-            TPA = mydata.get(event_contents.ARP_TPA)
-            THA = mydata.get(event_contents.ARP_THA)
-            src_dpid = mydata.get(event_contents.SRC_DPID, None)
-            src_port = mydata.get(event_contents.SRC_PORT, None)
-            dont_send = mydata.get(event_contents.DONT_SEND, False)
+            if mydata.get(event_contents.DUMMY_IP_PACKET, False):
+                mybuffer = ctypes.create_string_buffer(100)
 
-            self.mac2port.mac_ip_add(mac = haddr_to_bin(SHA), ip = ipaddr_to_bin(SPA), dpid = src_dpid, port = src_port)
-            if not dont_send:
-                mybuffer = ctypes.create_string_buffer(42)
-
-                struct.pack_into('!6s6sHHHbbH6s4s6s4s',
+                struct.pack_into('!6s6sH',
                                  mybuffer, 0, haddr_to_bin(dst), haddr_to_bin(src),
-                                 _eth_type, HTYPE, PTYPE, HLEN, PLEN, OPER,
-                                 haddr_to_bin(SHA), ipaddr_to_bin(SPA),
-                                 haddr_to_bin(THA), ipaddr_to_bin(TPA))
+                                 _eth_type)
                 datapath.send_packet_out(actions = actions, data = mybuffer)
+            else:
+                HTYPE = mydata.get(event_contents.ARP_HTYPE)
+                PTYPE = mydata.get(event_contents.ARP_PTYPE)
+                HLEN = mydata.get(event_contents.ARP_HLEN)
+                PLEN = mydata.get(event_contents.ARP_PLEN)
+                OPER = mydata.get(event_contents.ARP_OPER)
+                SPA = mydata.get(event_contents.ARP_SPA)
+                SHA = mydata.get(event_contents.ARP_SHA)
+                TPA = mydata.get(event_contents.ARP_TPA)
+                THA = mydata.get(event_contents.ARP_THA)
+                src_dpid = mydata.get(event_contents.SRC_DPID, None)
+                src_port = mydata.get(event_contents.SRC_PORT, None)
+                dont_send = mydata.get(event_contents.DONT_SEND, False)
+
+                self.mac2port.mac_ip_add(mac = haddr_to_bin(SHA), ip = ipaddr_to_bin(SPA), dpid = src_dpid, port = src_port)
+                if not dont_send:
+                    mybuffer = ctypes.create_string_buffer(42)
+
+                    struct.pack_into('!6s6sHHHbbH6s4s6s4s',
+                                     mybuffer, 0, haddr_to_bin(dst), haddr_to_bin(src),
+                                     _eth_type, HTYPE, PTYPE, HLEN, PLEN, OPER,
+                                     haddr_to_bin(SHA), ipaddr_to_bin(SPA),
+                                     haddr_to_bin(THA), ipaddr_to_bin(TPA))
+                    datapath.send_packet_out(actions = actions, data = mybuffer)
         else:
             datapath.send_packet_out(int(buffer_id), int(in_port), actions = actions, data = None)
             buffer_ids = self.flow_store.get_similar_pending_msgs(dpid, int(in_port), int(buffer_id))
@@ -466,7 +479,7 @@ class RestStatsApi(app_manager.RyuApp):
         uri = path + '/flow/{dpid}'
         mapper.connect('stats', uri,
                        controller = StatsController, action = 'get_flow_stats',
-                       conditions = dict(method = ['GET']))
+                       conditions = dict(method = ['PUT']))
 
         uri = path + '/port/{dpid}'
         mapper.connect('stats', uri,
@@ -545,11 +558,11 @@ class RestStatsApi(app_manager.RyuApp):
 
         if dp.id not in self.waiters:
             return
+        # print 'stats_reply_handler:', msg.xid
         if msg.xid not in self.waiters[dp.id]:
             return
         lock, msgs = self.waiters[dp.id][msg.xid]
         msgs.append(msg)
-#        print 'stats_reply_handler:', msgs
 
         if msg.flags & dp.ofproto.OFPSF_REPLY_MORE:
             return

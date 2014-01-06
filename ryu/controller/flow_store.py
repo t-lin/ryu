@@ -164,7 +164,7 @@ class FlowStore(object):
             return self._dps
         return self._dps.get(dpid, {})
 
-    def _remove_from_port_block(self,dpid, in_port, src):
+    def _remove_from_port_block(self, dpid, in_port, src):
         try:
             self._blocked_macs[dpid][in_port].pop(src, None)
         except:
@@ -392,7 +392,7 @@ class FlowStore(object):
                 self.dpid_ids[dpid] = id
             self.dpid_nums[dpid] = self.dpid_nums.get(dpid, 0) + 1
             src_mac_list.append((priority, id, eth_type, actions, out_port, idle_timeout, hard_timeout, 1, user_id, extra_match))
-            src_mac_list.reverse()
+            src_mac_list.sort(reverse = True)
             if id > 0 and user_id is not None:
                 self._user_flows.setdefault(dpid, {})
                 self._user_flows[dpid][id] = (in_port, dest, src, eth_type, src_mac_list)

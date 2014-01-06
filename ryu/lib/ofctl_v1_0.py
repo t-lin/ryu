@@ -195,17 +195,16 @@ def send_stats_request(dp, stats, waiters, msgs):
     dp.set_xid(stats)
     waiters.setdefault(dp.id, {})
     lock = gevent.event.AsyncResult()
-#    print 'Stats %s', str(stats.xid)
+    # print 'Stats %s', str(stats.xid)
     waiters[dp.id][stats.xid] = (lock, msgs)
-#    print "send stats %s, %s" % (dp.id, stats.xid)
+    # print "send stats %s, %s" % (dp.id, stats.xid)
     dp.send_msg(stats)
 
     try:
         lock.get(timeout = DEFAULT_TIMEOUT)
     except gevent.Timeout:
         del waiters[dp.id][stats.xid]
-#        print "deleted stats %s, %s" % (dp.id, stats.xid)
-
+        # print "deleted stats %s, %s" % (dp.id, stats.xid)
 
 def get_desc_stats(dp, waiters):
     stats = dp.ofproto_parser.OFPDescStatsRequest(dp, 0)
@@ -227,9 +226,10 @@ def get_desc_stats(dp, waiters):
     return desc
 
 
-def get_flow_stats(dp, waiters):
-    match = dp.ofproto_parser.OFPMatch(
-        dp.ofproto.OFPFW_ALL, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+def get_flow_stats(dp, flow, waiters):
+    match = to_match(dp, flow.get('match', {}))
+    # match = dp.ofproto_parser.OFPMatch(
+    #    dp.ofproto.OFPFW_ALL, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
     stats = dp.ofproto_parser.OFPFlowStatsRequest(
         dp, 0, match, 0xff, dp.ofproto.OFPP_NONE)
     msgs = []
@@ -330,15 +330,15 @@ def send_features_request(dp, features, waiters, msgs):
 
 
 def get_features(dp, waiters):
-    print 'Waiters %s' % str(waiters)
+    # print 'Waiters %s' % str(waiters)
     features = dp.ofproto_parser.OFPFeaturesRequest(dp)
-    print 'feature requested %s' % str(features.xid)
+    # print 'feature requested %s' % str(features.xid)
     msgs = []
     send_features_request(dp, features, waiters, msgs)
 
     for msg in msgs:
-	print msg
         s = msg.body
+# print msg
 #    feature = {str(dp.id): s}
     feature = {dpid_to_str(dp.id): s}
     return feature
