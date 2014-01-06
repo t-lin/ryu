@@ -244,6 +244,84 @@ class StatsController(ControllerBase):
         body = json.dumps(flows)
         return (Response(content_type = 'application/json', body = body))
 
+    def get_flow_from_store(self, req, dpid, **_kwargs):
+        try:
+            dp = int(dpid)
+            flow = eval(req.body)
+            match = flow['match']
+            (id, pr, eth_t, acts, out_ports,
+                idle_timeout, hard_timeout,
+                with_src) = self.flow_store.get_flow(
+                                        dp, match.get('in_port'),
+                                        match.get('dl_src'), match.get('dl_dst'),
+                                        match.get('eth_type'), nw_proto = match.get('nw_proto', None),
+                                        tp_src = match.get('tp_src', None),
+                                        tp_dst = match.get('tp_dst', None),
+                                        nw_src = match.get('nw_src', None),
+                                        nw_dst = match.get('nw_dst', None))
+
+            flow = {}
+            flow['id'] = id
+            flow['priority'] = pr
+            flow['eth_type'] = eth_t
+            flow['actions'] = acts
+            flow['out_ports'] = out_ports
+            flow['idle_timeout'] = idle_timeout
+            flow['hard_timeout'] = hard_timeout
+            flow['with_src'] = with_src
+            flow['match'] = match
+
+            body = json.dumps(flow)
+            return (Response(content_type = 'application/json', body = body))
+        except:
+            return Response(status = 500)
+
+    def install_rule_for_match(self, req, dpid, **_kwargs):
+        try:
+            dp = int(dpid)
+            flow = eval(req.body)
+            match = flow['match']
+            (id, pr, eth_t, acts, out_ports,
+                idle_timeout, hard_timeout,
+                with_src) = self.flow_store.get_flow(
+                                        dp, match.get('in_port'),
+                                        match.get('dl_src'), match.get('dl_dst'),
+                                        match.get('eth_type'), nw_proto = match.get('nw_proto', None),
+                                        tp_src = match.get('tp_src', None),
+                                        tp_dst = match.get('tp_dst', None),
+                                        nw_src = match.get('nw_src', None),
+                                        nw_dst = match.get('nw_dst', None))
+
+            flow = {}
+            flow['id'] = id
+            flow['priority'] = pr
+            flow['eth_type'] = eth_t
+            flow['actions'] = acts
+            flow['out_ports'] = out_ports
+            flow['idle_timeout'] = idle_timeout
+            flow['hard_timeout'] = hard_timeout
+            flow['with_src'] = with_src
+
+
+            if pr is not None and acts is not None:
+                new_match = {}
+                for key in 'dl_src', 'dl_dst', 'in_port':
+                    new_match[key] = match.get(key, None)
+                if with_src == 0:
+                    new_match.pop('dl_src', None)
+                if eth_t:
+                    new_match['eth_type'] = eth_t
+
+                flow['match'] = new_match
+                datapath = self.dpset.get(int(dpid))
+                cmd = datapath.ofproto.OFPFC_ADD
+                ofctl_v1_0.mod_flow_entry(datapath, flow, cmd)
+
+            body = json.dumps(flow)
+            return (Response(content_type = 'application/json', body = body))
+        except:
+            return Response(status = 500)
+
     def mod_flow_entry(self, req, cmd, **_kwargs):
         try:
             flow = eval(req.body)
@@ -521,6 +599,16 @@ class RestStatsApi(app_manager.RyuApp):
         mapper.connect('stats', uri,
                        controller = StatsController, action = 'list_flow_store',
                        conditions = dict(method = ['GET']))
+
+        uri = path + '/flowentry/store/{dpid}'
+        mapper.connect('stats', uri,
+                       controller = StatsController, action = 'get_flow_from_store',
+                       conditions = dict(method = ['PUT']))
+
+        uri = path + '/flowentry/store_install/{dpid}'
+        mapper.connect('stats', uri,
+                       controller = StatsController, action = 'install_rule_for_match',
+                       conditions = dict(method = ['PUT']))
 
         uri = path + '/flowentry/store'
         mapper.connect('stats', uri,
