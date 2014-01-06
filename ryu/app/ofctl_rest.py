@@ -115,6 +115,7 @@ class StatsController(ControllerBase):
             LOG.debug('Unsupported OF protocol')
             return Response(status = 501)
 
+        flows['time_stamp'] = str(datetime.datetime.now())
         body = json.dumps(flows)
         return (Response(content_type = 'application/json', body = body))
 
