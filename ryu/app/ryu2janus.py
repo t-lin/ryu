@@ -115,10 +115,11 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
         self.rabbit_host = FLAGS.rabbit_host
         self.rabbit_enabled = FLAGS.rabbit_enabled
         self.rest_enabled = FLAGS.rest_enabled
-        self.credentials = pika.PlainCredentials(self.rabbit_user, self.rabbit_password)
-        self.connection = pika.BlockingConnection(pika.ConnectionParameters(host = self.rabbit_host, credentials = self.credentials))
-        self.channel = self.connection.channel()
-        self.channel.exchange_declare(exchange = 'ryuRabbitEvents_exchange', type = 'fanout')
+        if self.rabbit_enabled:
+            self.credentials = pika.PlainCredentials(self.rabbit_user, self.rabbit_password)
+            self.connection = pika.BlockingConnection(pika.ConnectionParameters(host = self.rabbit_host, credentials = self.credentials))
+            self.channel = self.connection.channel()
+            self.channel.exchange_declare(exchange = 'ryuRabbitEvents_exchange', type = 'fanout')
 
         self.flow_store = kwargs['flow_store']
         self.is_active = True
