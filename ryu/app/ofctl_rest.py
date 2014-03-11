@@ -314,6 +314,7 @@ class StatsController(ControllerBase):
                     new_match['eth_type'] = eth_t
 
                 flow['match'] = new_match
+                flow['cookie'] = id
                 datapath = self.dpset.get(int(dpid))
                 cmd = datapath.ofproto.OFPFC_ADD
                 ofctl_v1_0.mod_flow_entry(datapath, flow, cmd)
@@ -339,6 +340,7 @@ class StatsController(ControllerBase):
             if cmd == 'add':
                 cmd = dp.ofproto.OFPFC_ADD
                 id = self.flow_store.add_flow_dict(flow, self.api_db)
+                flow['cookie'] = id
             elif cmd == 'modify':
                 cmd = dp.ofproto.OFPFC_MODIFY
             elif cmd == 'delete':

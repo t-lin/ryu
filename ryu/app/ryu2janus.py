@@ -131,7 +131,7 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
         # gevent.killall(self.threads)
         gevent.joinall(self.threads)
 
-    def _install_user_flow(self, datapath, in_port, src, dst, eth_type, actions, priority, idle_timeout, hard_timeout, extra_match):
+    def _install_user_flow(self, datapath, in_port, src, dst, eth_type, actions, priority, idle_timeout, hard_timeout, extra_match, cookie = 0):
         # src and dst are in str format
         ofproto = datapath.ofproto
         if LOG.getEffectiveLevel() == logging.DEBUG:
@@ -191,7 +191,7 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
         m = ofctl_v1_0.to_match(datapath, match)
 
         flow_mod = datapath.ofproto_parser.OFPFlowMod(
-            datapath = datapath, match = m, cookie = 0,
+            datapath = datapath, match = m, cookie = cookie,
             command = datapath.ofproto.OFPFC_ADD, idle_timeout = idle_timeout,
             hard_timeout = hard_timeout, priority = priority,
             out_port = ofproto.OFPP_NONE, flags = ofproto.OFPFF_SEND_FLOW_REM, actions = actions)
@@ -209,7 +209,7 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
 
     def _install_modflow(self, msg, in_port, src, dst = None, eth_type = None, actions = None,
                          priority = OFP_DEFAULT_PRIORITY,
-                         idle_timeout = 0, hard_timeout = 0):
+                         idle_timeout = 0, hard_timeout = 0, cookie = 0):
         datapath = msg.datapath
         ofproto = datapath.ofproto
         if LOG.getEffectiveLevel() == logging.DEBUG:
@@ -235,7 +235,7 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
             rule.set_dl_type(eth_type)
 
         datapath.send_flow_mod(
-            rule = rule, cookie = 0, command = datapath.ofproto.OFPFC_ADD,
+            rule = rule, cookie = cookie, command = datapath.ofproto.OFPFC_ADD,
             idle_timeout = idle_timeout, hard_timeout = hard_timeout,
             priority = priority,
             buffer_id = 0xffffffff, out_port = ofproto.OFPP_NONE,
@@ -497,7 +497,7 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
                     temp_src = None
                 else:
                     temp_src = dl_src
-                self._install_modflow(msg, msg.in_port, temp_src, dl_dst, eth_t, actions, pr, idle_timeout, hard_timeout)
+                self._install_modflow(msg, msg.in_port, temp_src, dl_dst, eth_t, actions, pr, idle_timeout, hard_timeout, cookie = id)
                 datapath.send_packet_out(int(msg.buffer_id), int(msg.in_port), actions = actions, data = None)
                 return
             else:
@@ -746,11 +746,11 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
     def _install_user_flows(self, dp, dpid):
         user_flow_dict = self.flow_store.get_user_flows(dpid)
         LOG.info('dp_handler %s %s user_flows loaded', dpid, len(user_flow_dict))
-        for (in_port, dest, src, eth_type, pr, acts, out_ports, idle_timeout, hard_timeout, user_id, extra_match) in user_flow_dict.values():
+        for id, (in_port, dest, src, eth_type, pr, acts, out_ports, idle_timeout, hard_timeout, user_id, extra_match) in user_flow_dict.iteritems():
             actions = ofctl_v1_0.to_actions(dp, acts)
             if src == '0' or src is None:
                 temp_src = None
             else:
                 temp_src = src
-            self._install_user_flow(dp, in_port, src, dest, eth_type, actions, pr, idle_timeout, hard_timeout, extra_match)
+            self._install_user_flow(dp, in_port, src, dest, eth_type, actions, pr, idle_timeout, hard_timeout, extra_match, cookie = id)
         return
