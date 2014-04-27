@@ -287,7 +287,11 @@ def get_port_stats(dp, waiters):
 
 
 def mod_flow_entry(dp, flow, cmd):
-    cookie = int(flow.get('cookie', 0))
+    if flow.get('cookie', 0):
+       cookie = int(flow.get('cookie', 0))
+    else:
+       cookie = 0
+
     priority = int(flow.get('priority',
                             dp.ofproto.OFP_DEFAULT_PRIORITY))
     flags = int(flow.get('flags', 0))
