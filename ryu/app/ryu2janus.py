@@ -503,9 +503,9 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
                                                     nw_src = src_ip,
                                                     nw_dst = dst_ip)
                     if pr is not None and acts is not None:
-                        actions.extend(ofctl_v1_0.to_actions(datapath, acts))                    
+                        actions.extend(ofctl_v1_0.to_actions(datapath, acts))
 
-                        datapath.send_packet_out(int(msg.buffer_id), int(msg.in_port), actions=actions, data=msg.data)
+                        datapath.send_packet_out(int(msg.buffer_id), int(msg.in_port), actions = actions, data = msg.data)
                     else:
                         self._drop_packet(msg)
                     return
@@ -607,7 +607,7 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
             actions = [output]
 
 #            ofctl_v1_0.mod_flow_entry(dp, flow, ofproto.OFPFC_ADD)
-            #send up all dhcp request with broadcast destination
+            # send up all dhcp request with broadcast destination
             flow = {}
             flow['dl_dst'] = 'ff:ff:ff:ff:ff:ff'
             flow['dl_type'] = OFI_ETH_TYPE_IP
@@ -626,7 +626,7 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
 
             dp.send_msg(flow_mod)
 
-            #send up all dhcp responses with broadcast destination
+            # send up all dhcp responses with broadcast destination
             flow = {}
             flow['dl_dst'] = 'ff:ff:ff:ff:ff:ff'
             flow['dl_type'] = OFI_ETH_TYPE_IP
@@ -645,7 +645,7 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
 
             dp.send_msg(flow_mod)
 
-            #send up all arp with broadcast destination
+            # send up all arp with broadcast destination
             flow = {}
             flow['dl_dst'] = 'ff:ff:ff:ff:ff:ff'
             flow['dl_type'] = OFI_ETH_TYPE_ARP
@@ -660,8 +660,8 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
                 flags = 0, actions = actions, out_port = out_port)
 
             dp.send_msg(flow_mod)
-            
-            #drop all IPv6 unicast
+
+            # drop all IPv6 unicast
             flow = {}
             flow['dl_dst'] = '33:33:00:00:00:01'
             match = ofctl_v1_0.to_match(dp, flow)
@@ -726,7 +726,7 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
 
     def _handle_arp_packets(self, msg, dst, src, _eth_type, HTYPE, PTYPE, HLEN, PLEN,
                                         OPER, SHA, SPA, THA, TPA):
-        datapath = msg.datapath
+        dp = datapath = msg.datapath
         dpid = datapath.id
     # print 'yes. received arp packet.'
         # print 'HTYPE = %d, PTYPE = %d, HLEN = %d, PLEN = %d, OPER = %d, SHA = %s, SPA = %s, THA = %s, TPA = %s' % (
@@ -734,6 +734,30 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
         if OPER != 1:
             self._drop_packet(msg)
             return True
+        in_port = msg.in_port
+        actions = self.flow_store.get_arp_flow(dpid, in_port, haddr_to_str(src))
+        if actions is not None:
+            LOG.info("arp packet handled (%s, %s), (%s)", hex(dpid), in_port,
+                     haddr_to_str(src))
+            flow = {}
+            flow['in_port'] = in_port
+            flow['dl_src'] = haddr_to_str(src)
+            flow['dl_dst'] = 'ff:ff:ff:ff:ff:ff'
+            flow['dl_type'] = OFI_ETH_TYPE_ARP
+            match = ofctl_v1_0.to_match(dp, flow)
+            priority = OFP_DEFAULT_PRIORITY + 30000
+            acts = ofctl_v1_0.to_actions(dp, actions)
+            out_port = int(flow.get('out_port', ofproto_v1_0.OFPP_NONE))
+            flow_mod = dp.ofproto_parser.OFPFlowMod(
+                datapath = dp, match = match, cookie = 0,
+                command = dp.ofproto.OFPFC_ADD, idle_timeout = 0,
+                hard_timeout = 0, priority = priority,
+                flags = 0, actions = acts, out_port = out_port)
+
+            dp.send_msg(flow_mod)
+            dp.send_packet_out(buffer_id, in_port, actions = acts)
+            return True
+
         dst_ip = SPA
         dst_mac = SHA
         src_ip = TPA
@@ -808,11 +832,11 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
                     for (dpid, dp) in dps:
                         self._install_user_flows(dp, dpid)
                 if (time.time() - expire4) > PORT_BW_UPDATE_INTERVAL:
-                    old_time = expire4                    
+                    old_time = expire4
                     expire4 = time.time()
                     dps = self.dpset.get_all()
-                    bw = {} 
-                    for (dpid, dp) in dps:                
+                    bw = {}
+                    for (dpid, dp) in dps:
                         if dp.ofproto.OFP_VERSION == ofproto_v1_0.OFP_VERSION:
                             t1 = time.time()
                             ports = ofctl_v1_0.get_port_stats(dp, self.waiters)
@@ -821,13 +845,13 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
                                     continue
                                 for port in ports:
                                     port_stats.setdefault(dpid, {})
-                                    (l_time, l_rx_bytes, l_tx_bytes) = port_stats[dpid].setdefault(port['port_no'], (0,0,0))
+                                    (l_time, l_rx_bytes, l_tx_bytes) = port_stats[dpid].setdefault(port['port_no'], (0, 0, 0))
                                     if l_time != 0:
                                         diff_time = (t1 - l_time)
                                         rx_bw = (port['rx_bytes'] - l_rx_bytes) / diff_time
                                         tx_bw = (port['tx_bytes'] - l_tx_bytes) / diff_time
                                         bw.setdefault(dpid, {})
-                                        bw[dpid].setdefault(port['port_no'], (rx_bw,tx_bw))
+                                        bw[dpid].setdefault(port['port_no'], (rx_bw, tx_bw))
                                     port_stats[dpid][port['port_no']] = (t1, port['rx_bytes'], port['tx_bytes'])
                     if len(bw) > 0:
                         body = json.dumps({'event': {'of_event_id': JANEVENTS.JAN_EV_PORT_BW_UPDATE, 'bw': bw}})
@@ -860,7 +884,7 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
 
         if dp.id not in self.waiters:
             return
-        #print 'stats_reply_handler:', msg.xid
+        # print 'stats_reply_handler:', msg.xid
         if msg.xid not in self.waiters[dp.id]:
             return
         lock, msgs = self.waiters[dp.id][msg.xid]

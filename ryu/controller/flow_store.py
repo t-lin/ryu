@@ -249,7 +249,8 @@ class FlowStore(object):
     def add_dhcp_flow(self, dpid, in_port, src, actions):
         self._dhcp_flow.setdefault(dpid, {})
         self._dhcp_flow[dpid].setdefault(in_port, {})
-        self._dhcp_flow[dpid][in_port][src] = actions
+        (d_acts, a_acts) = self._dhcp_flow[dpid][in_port].get(src, (None, None))
+        self._dhcp_flow[dpid][in_port][src] = (actions, a_acts)
         self._dhcp_mac_list[src] = (dpid, in_port)
         return
 
@@ -263,29 +264,57 @@ class FlowStore(object):
 
     def get_dhcp_flow(self, dpid, in_port, src):
         try:
-            return self._dhcp_flow[dpid][in_port][src]
+            (d_acts, a_acts) = self._dhcp_flow[dpid][in_port][src]
+            return d_acts
+        except:
+            return None
+
+    def add_arp_flow(self, dpid, in_port, src, actions):
+        self._dhcp_flow.setdefault(dpid, {})
+        self._dhcp_flow[dpid].setdefault(in_port, {})
+        (d_acts, a_acts) = self._dhcp_flow[dpid][in_port].get(src, (None, None))
+        self._dhcp_flow[dpid][in_port][src] = (d_acts, actions)
+        self._dhcp_mac_list[src] = (dpid, in_port)
+        return
+
+    def del_arp_flow(self, src):
+        try:
+            (d_id, port) = self._dhcp_mac_list.pop(src, (None, None))
+            if d_id and port:
+                del self._dhcp_flow[d_id][port][src]
+        except:
+            pass
+
+    def get_arp_flow(self, dpid, in_port, src):
+        try:
+            (d_acts, a_acts) = self._dhcp_flow[dpid][in_port][src]
+            return a_acts
         except:
             return None
 
     def add_flow_dict(self, flow, api_db):
         match = flow.get('match', {})
         # first check to see if it is a dhcp flow
-        priority = flow.get('priority', OFP_DEF_PRIORITY)
+        priority = int(flow.get('priority', OFP_DEF_PRIORITY))
         src = match.get('dl_src', None)
         dest = match.get('dl_dst', None)
-        eth_type = match.get('dl_type', None)
-        in_port = match.get('in_port', None)
-        dpid = flow.get('dpid', None)
+        eth_type = int(match.get('dl_type', None))
+        in_port = int(match.get('in_port', None))
+        dpid = int(flow.get('dpid', None))
         actions = flow.get('actions', {})
         user_id = flow.get('user_id', None)
-        if user_id is None and match.get('tp_src', 0) == 68 and eth_type == 0x800:
+        if user_id is None and int(match.get('tp_src', 0)) == 68 and eth_type == 0x800:
             # this is a dhcp flow, no need to add to store
             self.add_dhcp_flow(dpid, in_port, src, actions)
             return
+        if user_id is None and dest == 'ff:ff:ff:ff:ff:ff' and eth_type == 0x806:
+            # this is an arp flow, no need to add to store
+            self.add_arp_flow(dpid, in_port, src, actions)
+            return
 
-        out_port = flow.get('out_port', ofproto_v1_0.OFPP_NONE)
-        idle_timeout = flow.get('idle_timeout', 0)
-        hard_timeout = flow.get('hard_timeout', 0)
+        out_port = int(flow.get('out_port', ofproto_v1_0.OFPP_NONE))
+        idle_timeout = int(flow.get('idle_timeout', 0))
+        hard_timeout = int(flow.get('hard_timeout', 0))
 
         extra_match = {}
         for key, val in match.iteritems():
