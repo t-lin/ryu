@@ -298,7 +298,9 @@ class FlowStore(object):
         priority = int(flow.get('priority', OFP_DEF_PRIORITY))
         src = match.get('dl_src', None)
         dest = match.get('dl_dst', None)
-        eth_type = int(match.get('dl_type', None))
+        eth_type = match.get('dl_type', None)
+        if eth_type:
+           eth_type = int(eth_type)
         in_port = int(match.get('in_port', None))
         dpid = int(flow.get('dpid', None))
         actions = flow.get('actions', {})
