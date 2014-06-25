@@ -19,7 +19,7 @@ import logging
 import gevent
 
 from ryu.ofproto import ofproto_v1_0
-from ryu.lib.mac import haddr_to_bin, haddr_to_str, ALL_MAC, ipaddr_to_bin
+from ryu.lib.mac import haddr_to_bin, haddr_to_str, ALL_MAC, ipaddr_to_bin, ipaddr_to_int
 from ryu.lib.dpid import dpid_to_str
 
 
@@ -49,10 +49,10 @@ def to_actions(dp, acts):
             dl_dst = haddr_to_bin(a.get('dl_dst'))
             actions.append(dp.ofproto_parser.OFPActionSetDlDst(dl_dst))
         elif action_type == 'SET_NW_DST':
-            nw_dst = ipaddr_to_bin(a.get('nw_dst'))
+            nw_dst = ipaddr_to_int(a.get('nw_dst'))
             actions.append(dp.ofproto_parser.OFPActionSetNwDst(nw_dst))
         elif action_type == 'SET_NW_SRC':
-            nw_src = ipaddr_to_bin(a.get('nw_src'))
+            nw_src = ipaddr_to_int(a.get('nw_src'))
             actions.append(dp.ofproto_parser.OFPActionSetNwSrc(nw_src))
         elif action_type == 'SET_TP_SRC':
             tp_src = int(a.get('tp_src'))

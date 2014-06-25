@@ -15,6 +15,8 @@
 # limitations under the License.
 
 import itertools
+import struct
+import socket
 
 ALL_MAC = 'ALL'
 # string representation
@@ -68,3 +70,7 @@ def ipaddr_to_bin(string):
 def ipaddr_to_str(addr):
     assert len(addr) == _IP_LEN
     return '.'.join('%d' % ord(char) for char in addr)
+
+def ipaddr_to_int(addr):                                                               
+    return struct.unpack("!I", socket.inet_aton(addr))[0]  
+
