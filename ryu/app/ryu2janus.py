@@ -346,7 +346,7 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
                 tp_sport, tp_dport = struct.unpack_from('!HH', buffer(data), 34)
                 if tp_sport == 68:
                     actions = self.flow_store.get_dhcp_flow(dpid, in_port, haddr_to_str(dl_src))
-                    if actions is not None:
+                    if False: #actions is not None:
                         LOG.info("dhcp packet handled (%s, %s), (%s), %s -> %s", hex(dpid), in_port,
                                  haddr_to_str(dl_src), str(IPAddress(src_ip)), str(IPAddress(dst_ip)))
                         flow = {}
@@ -363,7 +363,7 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
                         out_port = int(flow.get('out_port', ofproto_v1_0.OFPP_NONE))
                         flow_mod = dp.ofproto_parser.OFPFlowMod(
                             datapath = dp, match = match, cookie = 0,
-                            command = dp.ofproto.OFPFC_ADD, idle_timeout = 0,
+                            command = dp.ofproto.OFPFC_ADD, idle_timeout = 140,
                             hard_timeout = 0, priority = priority,
                             flags = 0, actions = acts, out_port = out_port)
 
@@ -477,17 +477,20 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
             contents.set_nw_dest(dst_ip)
             if ip_proto == inet.IPPROTO_TCP or ip_proto == inet.IPPROTO_UDP:
                 tp_sport, tp_dport = struct.unpack_from('!HH', buffer(msg.data), 34)
+                #LOG.info( "HERE... %d, %d, %s" % (tp_sport, tp_dport, ipaddr_to_str(dst_ip), haddr_to_str(dl_dst)) ) 
+                #LOG.info( "HERE... %d, %d, %s" % (tp_sport, tp_dport, haddr_to_str(dl_dst)) ) 
                 contents.set_tp_sport (tp_sport)
                 contents.set_tp_dport (tp_dport)
                 if dl_dst == mac.BROADCAST and \
-                    dst_ip == '\xff' * 4 and ip_proto == inet.IPPROTO_UDP and \
+                    dst_ip == 0xffffffff and ip_proto == inet.IPPROTO_UDP and \
                     tp_sport == 67 and tp_dport == 68:
                     # DHCP broadcast reply (assume entire packet was forwarded)
                     # Parse client MAC from data and replace dl_dst
-                    print "msg.data length is... %s" % len(msg.data)
-                    print "buffer id is... %s" % msg.buffer_id
+                    #LOG.info( "msg.data length is... %s" % len(msg.data) ) 
+                    #LOG.info("buffer id is... %s" % msg.buffer_id )
+                    buffer_id = msg.buffer_id
                     client_mac, = struct.unpack_from('!6s', buffer(msg.data), 70)
-                    print "\n\n THE CLIENT MAC IS... %s\n\n" % haddr_to_str(client_mac)
+                    #LOG.info("\n\n THE CLIENT MAC IS... %s\n\n" % haddr_to_str(client_mac))
 
                     # Overwrite destination MAC address and send out
                     actions = []
@@ -496,7 +499,7 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
                         idle_timeout, hard_timeout,
                         with_src) = self.flow_store.get_flow(
                                                    datapath.id, msg.in_port,
-                                                    haddr_to_str(dl_src), haddr_to_str(CLIENT_mac),
+                                                    haddr_to_str(dl_src), haddr_to_str(client_mac),
                                                     _eth_type, nw_proto = ip_proto,
                                                     tp_src = tp_sport,
                                                     tp_dst = tp_dport,
@@ -505,7 +508,7 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
                     if pr is not None and acts is not None:
                         actions.extend(ofctl_v1_0.to_actions(datapath, acts))
 
-                        datapath.send_packet_out(int(msg.buffer_id), int(msg.in_port), actions = actions, data = msg.data)
+                        datapath.send_packet_out(buffer_id=buffer_id, in_port=msg.in_port, actions = actions, data = None) #msg.data)
                     else:
                         self._drop_packet(msg)
                     return
@@ -755,7 +758,7 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
                 flags = 0, actions = acts, out_port = out_port)
 
             dp.send_msg(flow_mod)
-            dp.send_packet_out(buffer_id, in_port, actions = acts)
+            dp.send_packet_out(msg.buffer_id, in_port, actions = acts)
             return True
 
         dst_ip = SPA

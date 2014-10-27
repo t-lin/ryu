@@ -19,7 +19,7 @@ import logging
 import gevent
 
 from ryu.ofproto import ofproto_v1_0
-from ryu.lib.mac import haddr_to_bin, haddr_to_str, ALL_MAC, ipaddr_to_bin, ipaddr_to_int
+from ryu.lib.mac import haddr_to_bin, haddr_to_str, ALL_MAC, ipaddr_to_bin, ipaddr_to_int,ipaddr_to_str,int2ip
 from ryu.lib.dpid import dpid_to_str
 
 
@@ -84,9 +84,9 @@ def actions_to_str(acts):
         elif action_type == ofproto_v1_0.OFPAT_SET_DL_DST:
             buf = 'SET_DL_DST:' + haddr_to_str(a.dl_addr)
         elif action_type == ofproto_v1_0.OFPAT_SET_NW_DST:
-            buf = 'SET_NW_DST:' + ipaddr_to_str(a.nw_addr)
+            buf = 'SET_NW_DST:' + int2ip(a.nw_addr)
         elif action_type == ofproto_v1_0.OFPAT_SET_NW_SRC:
-            buf = 'SET_NW_SRC:' + ipaddr_to_str(a.nw_addr)
+            buf = 'SET_NW_SRC:' + int2ip(a.nw_addr)
         elif action_type == ofproto_v1_0.OFPAT_SET_TP_DST:
             buf = 'SET_TP_DST:' + str(a.tp)
         elif action_type == ofproto_v1_0.OFPAT_SET_TP_SRC:
