@@ -19,7 +19,7 @@ import logging
 import gevent
 
 from ryu.ofproto import ofproto_v1_0
-from ryu.lib.mac import haddr_to_bin, haddr_to_str, ALL_MAC, ipaddr_to_bin, ipaddr_to_int,ipaddr_to_str,int2ip
+from ryu.lib.mac import haddr_to_bin, haddr_to_str, ALL_MAC, ipaddr_to_bin, ipaddr_to_int, ipaddr_to_str, int2ip
 from ryu.lib.dpid import dpid_to_str
 
 
@@ -126,6 +126,12 @@ def to_match(dp, attrs):
             if value != ALL_MAC:
                 dl_dst = haddr_to_bin(value)
                 wildcards &= ~ofp.OFPFW_DL_DST
+        elif key == 'dl_src_h':
+            dl_src = value
+            wildcards &= ~ofp.OFPFW_DL_SRC
+        elif key == 'dl_dst_h':
+            dl_dst = value
+            wildcards &= ~ofp.OFPFW_DL_DST
         elif key == 'dl_vlan':
             dl_vlan = int(value)
             wildcards &= ~ofp.OFPFW_DL_VLAN

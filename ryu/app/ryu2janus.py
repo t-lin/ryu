@@ -47,6 +47,7 @@ from dpkt.ntp import BROADCAST
 from ryu.ofproto import nx_match, inet
 from ryu.lib import mac, ofctl_v1_0
 from netaddr import IPAddress
+from janus.network.contexts import mac2net
 
 FLAGS = gflags.FLAGS
 gflags.DEFINE_string('janus_host', '127.0.0.1', 'Janus host IP address')
@@ -102,6 +103,12 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
         self.second_host = FLAGS.second_janus_host
         self.second_port = FLAGS.second_janus_port
         self.second_dpids = {}
+
+        self._dns_servers = []
+        self._dns_servers.append('8.8.8.8')
+        self._dns_servers.append('4.4.4.4')
+        self.consider_extra_header = True
+
         if self.second_janus and self.second_host and self.second_port:
             in_file = FLAGS.dpid_file
             if in_file and len(in_file) > 0:
@@ -208,9 +215,19 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
             flags = ofproto.OFPFF_SEND_FLOW_REM, actions = actions)
         """
 
+    def install_tp_src(self, nw_src, nw_dst, tp_dport, tp_sport):
+        if tp_dport == 53 and nw_dst in self._dns_servers:
+            return False
+        return True
+
+    def install_tp_dst(self, nw_src, nw_dst, tp_dport, tp_sport):
+        if tp_sport == 53 and nw_src in self._dns_servers:
+            return False
+        return True
+
     def _install_modflow(self, msg, in_port, src, dst = None, eth_type = None, actions = None,
                          priority = OFP_DEFAULT_PRIORITY,
-                         idle_timeout = 0, hard_timeout = 0, cookie = 0):
+                         idle_timeout = 0, hard_timeout = 0, cookie = 0, extra_header_info = None):
         datapath = msg.datapath
         ofproto = datapath.ofproto
         if LOG.getEffectiveLevel() == logging.DEBUG:
@@ -225,22 +242,50 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
             actions = []
 
         # install flow
-        rule = nx_match.ClsRule()
+        match = {}
         if in_port is not None:
-            rule.set_in_port(in_port)
-        if dst is not None and dst != ALL_MAC:
-            rule.set_dl_dst(dst)
+            match['in_port'] = in_port
+        if dst is not None:
+            match['dl_dst_h'] = dst
         if src is not None:
-            rule.set_dl_src(src)
-        if eth_type is not None:
-            rule.set_dl_type(eth_type)
+            match['dl_src_h'] = src
+            if extra_header_info:
+                nw_src = extra_header_info.get('nw_src', None)
+                nw_dst = extra_header_info.get('nw_dst', None)
+                nw_proto = extra_header_info.get('nw_proto', None)
+                tp_sport = extra_header_info.get('tp_sport', None)
+                tp_dport = extra_header_info.get('tp_dport', None)
+                eth_type = extra_header_info.get('dl_type', eth_type)
+                if nw_src:
+                    match['nw_src'] = nw_src
+                if nw_dst:
+                    match['nw_dst'] = nw_dst
+                if nw_proto:
+                    match['nw_proto'] = nw_proto
+                if tp_sport and self.install_tp_src(nw_src, nw_dst, tp_dport, tp_sport):
+                    match['tp_src'] = tp_sport
+                if tp_dport and self.install_tp_dst(nw_src, nw_dst, tp_dport, tp_sport):
+                    match['tp_dst'] = tp_dport
 
+        if eth_type is not None:
+            match['dl_type'] = eth_type
+
+        flow_mod = datapath.ofproto_parser.OFPFlowMod(
+            datapath = datapath, match = ofctl_v1_0.to_match(datapath, match), cookie = cookie,
+            command = datapath.ofproto.OFPFC_ADD, idle_timeout = idle_timeout,
+            hard_timeout = hard_timeout, priority = priority,
+            out_port = ofproto.OFPP_NONE, flags = ofproto.OFPFF_SEND_FLOW_REM, actions = actions)
+
+        datapath.send_msg(flow_mod)
+        """
         datapath.send_flow_mod(
             rule = rule, cookie = cookie, command = datapath.ofproto.OFPFC_ADD,
             idle_timeout = idle_timeout, hard_timeout = hard_timeout,
             priority = priority,
             buffer_id = 0xffffffff, out_port = ofproto.OFPP_NONE,
             flags = ofproto.OFPFF_SEND_FLOW_REM, actions = actions)
+        """
+        return
 
     def _modflow_and_drop_packet(self, msg, src, dst, priority = OFP_DEFAULT_PRIORITY, idle_timeout = 0):
         LOG.info("installing flow for dropping packet")
@@ -346,7 +391,7 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
                 tp_sport, tp_dport = struct.unpack_from('!HH', buffer(data), 34)
                 if tp_sport == 68:
                     actions = self.flow_store.get_dhcp_flow(dpid, in_port, haddr_to_str(dl_src))
-                    if False: #actions is not None:
+                    if False:  # actions is not None:
                         LOG.info("dhcp packet handled (%s, %s), (%s), %s -> %s", hex(dpid), in_port,
                                  haddr_to_str(dl_src), str(IPAddress(src_ip)), str(IPAddress(dst_ip)))
                         flow = {}
@@ -423,6 +468,8 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
         contents.set_dl_src(haddr_to_str(dl_src))
         contents.set_eth_type(_eth_type)
 
+
+
         if _eth_type == 0x806 and dl_dst == mac.BROADCAST:  # ARP, broadcast
             HTYPE, PTYPE, HLEN, PLEN, OPER, SHA, SPA, THA, TPA = struct.unpack_from('!HHbbH6s4s6s4s', buffer(msg.data), 14)
             if self._handle_arp_packets(msg, dl_dst, dl_src, _eth_type,
@@ -477,8 +524,8 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
             contents.set_nw_dest(dst_ip)
             if ip_proto == inet.IPPROTO_TCP or ip_proto == inet.IPPROTO_UDP:
                 tp_sport, tp_dport = struct.unpack_from('!HH', buffer(msg.data), 34)
-                #LOG.info( "HERE... %d, %d, %s" % (tp_sport, tp_dport, ipaddr_to_str(dst_ip), haddr_to_str(dl_dst)) ) 
-                #LOG.info( "HERE... %d, %d, %s" % (tp_sport, tp_dport, haddr_to_str(dl_dst)) ) 
+                # LOG.info( "HERE... %d, %d, %s" % (tp_sport, tp_dport, ipaddr_to_str(dst_ip), haddr_to_str(dl_dst)) )
+                # LOG.info( "HERE... %d, %d, %s" % (tp_sport, tp_dport, haddr_to_str(dl_dst)) )
                 contents.set_tp_sport (tp_sport)
                 contents.set_tp_dport (tp_dport)
                 if dl_dst == mac.BROADCAST and \
@@ -486,11 +533,11 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
                     tp_sport == 67 and tp_dport == 68:
                     # DHCP broadcast reply (assume entire packet was forwarded)
                     # Parse client MAC from data and replace dl_dst
-                    #LOG.info( "msg.data length is... %s" % len(msg.data) ) 
-                    #LOG.info("buffer id is... %s" % msg.buffer_id )
+                    # LOG.info( "msg.data length is... %s" % len(msg.data) )
+                    # LOG.info("buffer id is... %s" % msg.buffer_id )
                     buffer_id = msg.buffer_id
                     client_mac, = struct.unpack_from('!6s', buffer(msg.data), 70)
-                    #LOG.info("\n\n THE CLIENT MAC IS... %s\n\n" % haddr_to_str(client_mac))
+                    # LOG.info("\n\n THE CLIENT MAC IS... %s\n\n" % haddr_to_str(client_mac))
 
                     # Overwrite destination MAC address and send out
                     actions = []
@@ -508,7 +555,7 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
                     if pr is not None and acts is not None:
                         actions.extend(ofctl_v1_0.to_actions(datapath, acts))
 
-                        datapath.send_packet_out(buffer_id=buffer_id, in_port=msg.in_port, actions = actions, data = None) #msg.data)
+                        datapath.send_packet_out(buffer_id = buffer_id, in_port = msg.in_port, actions = actions, data = None)  # msg.data)
                     else:
                         self._drop_packet(msg)
                     return
@@ -527,11 +574,26 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
                                             nw_dst = dst_ip)
             if pr is not None and acts is not None:
                 actions = ofctl_v1_0.to_actions(datapath, acts)
+                extra_header_info = None
                 if with_src == 0:
                     temp_src = None
                 else:
                     temp_src = dl_src
-                self._install_modflow(msg, msg.in_port, temp_src, dl_dst, eth_t, actions, pr, idle_timeout, hard_timeout, cookie = id)
+                    if self.consider_extra_header:
+                        extra_header_info = {}
+                        if src_ip:
+                            extra_header_info['nw_src'] = mac.int2ip(src_ip)
+                        if dst_ip:
+                            extra_header_info['nw_dst'] = mac.int2ip(dst_ip)
+                        if ip_proto:
+                            extra_header_info['nw_proto'] = ip_proto
+                        if tp_sport:
+                            extra_header_info['tp_sport'] = tp_sport
+                        if tp_dport:
+                            extra_header_info['tp_dport'] = tp_dport
+                        if _eth_type:
+                            extra_header_info['dl_type'] = _eth_type
+                self._install_modflow(msg, msg.in_port, temp_src, dl_dst, eth_t, actions, pr, idle_timeout, hard_timeout, cookie = id, extra_header_info = extra_header_info)
                 datapath.send_packet_out(int(msg.buffer_id), int(msg.in_port), actions = actions, data = None)
                 return
             else:

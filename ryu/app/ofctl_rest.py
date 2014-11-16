@@ -76,6 +76,10 @@ class StatsController(ControllerBase):
         self.mac2port = data.get('mac2port', None)
         self.api_db = data.get('api_db', None)
         self.adm_ctrl = data.get('adm_ctrl', None)
+        self._dns_servers = []
+        self._dns_servers.append('8.8.8.8')
+        self._dns_servers.append('4.4.4.4')
+        self.consider_extra_header = True
         assert self.mac2port is not None
         assert self.flow_store is not None
         assert self.api_db is not None
@@ -324,6 +328,41 @@ class StatsController(ControllerBase):
         except:
             return Response(status = 500)
 
+    def install_tp_src(self, nw_src, nw_dst, tp_dport, tp_sport):
+        if tp_dport == 53 and nw_dst in self._dns_servers:
+            return False
+        return True
+
+    def install_tp_dst(self, nw_src, nw_dst, tp_dport, tp_sport):
+        if tp_sport == 53 and nw_src in self._dns_servers:
+            return False
+        return True
+
+    def _update_flow_match(self, flow):
+        extra_header_info = flow.get('extra_header_info', None)
+        if self.consider_extra_header and extra_header_info \
+                 and flow.get('match', None) and flow['match'].get('dl_src', None):
+            dl_type = extra_header_info.get('dl_type', None)
+            nw_src = extra_header_info.get('nw_src', None)
+            nw_dst = extra_header_info.get('nw_dst', None)
+            nw_proto = extra_header_info.get('nw_proto', None)
+            tp_sport = extra_header_info.get('tp_sport', None)
+            tp_dport = extra_header_info.get('tp_dport', None)
+            if dl_type:
+                flow['match']['dl_type'] = dl_type
+            if nw_src:
+                flow['match']['nw_src'] = nw_src
+            if nw_dst:
+                flow['match']['nw_dst'] = nw_dst
+            if nw_proto:
+                flow['match']['nw_proto'] = nw_proto
+            if tp_sport and self.install_tp_src(nw_src, nw_dst, tp_dport, tp_sport):
+                flow['match']['tp_src'] = tp_sport
+            if tp_dport and self.install_tp_dst(nw_src, nw_dst, tp_dport, tp_sport):
+                flow['match']['tp_dst'] = tp_dport
+
+        return
+
     def mod_flow_entry(self, req, cmd, **_kwargs):
         try:
             flow = eval(req.body)
@@ -350,6 +389,7 @@ class StatsController(ControllerBase):
             else:
                 return Response(status = 404)
 
+            self._update_flow_match(flow)
             ofctl_v1_0.mod_flow_entry(dp, flow, cmd)
         else:
             LOG.debug('Unsupported OF protocol')
@@ -372,7 +412,6 @@ class StatsController(ControllerBase):
         except:
             LOG.debug('invalid syntax in del_user_flow %s', req.body)
             return Response(status = 400)
-
 
         try:
             for (dp_id, i) in id_list:
