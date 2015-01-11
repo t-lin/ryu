@@ -16,6 +16,8 @@
 import logging
 import time
 import socket, struct
+import traceback
+import netaddr
 
 from ryu.exception import MacAddressDuplicated, MacAddressNotFound
 from ryu.lib.mac import haddr_to_str, ALL_MAC
@@ -115,11 +117,17 @@ class FlowStore(object):
 
     def addressInNetwork(self, ipaddr, net):
        "Is an address in a network"
-       # ipaddr = struct.unpack('L', socket.inet_aton(ip))[0]
        try:
-           netaddr, bits = net.split('/')
-           netmask = struct.unpack('<L', socket.inet_aton(netaddr))[0] & ((2L << int(bits) - 1) - 1)
-           return ipaddr & netmask == netmask
+           try:
+               net1, bits = net.split('/')
+           except:
+               net1 = net
+               bits = 32
+           net2 = '%s/%s' % (net1, bits)
+           if netaddr.IPAddress(ipaddr) in netaddr.IPNetwork(net2):
+               return True
+           else:
+               return False
        except:
            traceback.print_exc()
            return False
@@ -213,6 +221,18 @@ class FlowStore(object):
             del u_dict[id]
         return r_dict
 
+    def _send_to_controller(self, actions):
+        try:
+            for index, act in enumerate(actions):
+                type = act.get('type', None)
+                if type == 'OUTPUT':
+                    if int(act.get('port', 0)) == ofproto_v1_0.OFPP_CONTROLLER:
+                        return True
+            return False
+        except:
+            return False
+
+
     def get_flow(self, dpid, in_port, src, dst, eth_type, nw_proto = None, nw_src = None, nw_dst = None, tp_src = None, tp_dst = None):
         dp_dict = self._dps.get(dpid, {})
         in_port_dict = dp_dict.get(in_port, {})
@@ -230,8 +250,10 @@ class FlowStore(object):
                 if extra_match is not None:
                     if not self._match_equal(extra_match, nw_proto, nw_src, nw_dst, tp_src, tp_dst):
                         continue
-                LOG.info("found : %s,%s,%s,%s,%s,%s" % (pr, eth_t, acts, out_ports, idle_timeout, hard_timeout))
-                return (id, pr, eth_t, acts, out_ports, idle_timeout, hard_timeout, with_source)
+                LOG.info("found : %s,%s,%s,%s,%s,%s,%s" % (pr, eth_t, acts, out_ports, idle_timeout, hard_timeout, extra_match))
+                if self._send_to_controller(acts):
+                    return (None, None, None, None, None, None, None, None, None)
+                return (id, pr, eth_t, acts, out_ports, idle_timeout, hard_timeout, with_source, extra_match)
 
         with_source = 0
         src_mac_list = dest_mac_dict.get('0', [])
@@ -240,11 +262,13 @@ class FlowStore(object):
                 if extra_match is not None:
                     if not self._match_equal(extra_match, nw_proto, nw_src, nw_dst, tp_src, tp_dst):
                         continue
-                ret = (id, pr, eth_t, acts, out_ports, idle_timeout, hard_timeout, with_source)
+                ret = (id, pr, eth_t, acts, out_ports, idle_timeout, hard_timeout, with_source, extra_match)
                 LOG.info("found : %s" % (ret,))
+                if self._send_to_controller(acts):
+                    return (None, None, None, None, None, None, None, None, None)
                 return ret
 
-        return (None, None, None, None, None, None, None, None)
+        return (None, None, None, None, None, None, None, None, None)
 
     def add_dhcp_flow(self, dpid, in_port, src, actions):
         self._dhcp_flow.setdefault(dpid, {})

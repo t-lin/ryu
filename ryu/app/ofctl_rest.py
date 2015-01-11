@@ -79,7 +79,7 @@ class StatsController(ControllerBase):
         self._dns_servers = []
         self._dns_servers.append('8.8.8.8')
         self._dns_servers.append('4.4.4.4')
-        self.consider_extra_header = True
+        self.consider_extra_header = False
         assert self.mac2port is not None
         assert self.flow_store is not None
         assert self.api_db is not None
@@ -256,7 +256,7 @@ class StatsController(ControllerBase):
             match = flow['match']
             (id, pr, eth_t, acts, out_ports,
                 idle_timeout, hard_timeout,
-                with_src) = self.flow_store.get_flow(
+                with_src, extra_match) = self.flow_store.get_flow(
                                         dp, match.get('in_port'),
                                         match.get('dl_src'), match.get('dl_dst'),
                                         match.get('eth_type'), nw_proto = match.get('nw_proto', None),
@@ -288,7 +288,7 @@ class StatsController(ControllerBase):
             match = flow['match']
             (id, pr, eth_t, acts, out_ports,
                 idle_timeout, hard_timeout,
-                with_src) = self.flow_store.get_flow(
+                with_src, extra_match) = self.flow_store.get_flow(
                                         dp, match.get('in_port'),
                                         match.get('dl_src'), match.get('dl_dst'),
                                         match.get('eth_type'), nw_proto = match.get('nw_proto', None),
@@ -331,10 +331,14 @@ class StatsController(ControllerBase):
     def install_tp_src(self, nw_src, nw_dst, tp_dport, tp_sport):
         if tp_dport == 53 and nw_dst in self._dns_servers:
             return False
+        if tp_dport == 80 or tp_dport == 443:
+            return False
         return True
 
     def install_tp_dst(self, nw_src, nw_dst, tp_dport, tp_sport):
         if tp_sport == 53 and nw_src in self._dns_servers:
+            return False
+        if tp_sport == 80 or tp_sport == 443:
             return False
         return True
 
