@@ -21,6 +21,7 @@ import gevent
 from ryu.ofproto import ofproto_v1_0
 from ryu.lib.mac import haddr_to_bin, haddr_to_str, ALL_MAC, ipaddr_to_bin, ipaddr_to_int, ipaddr_to_str, int2ip
 from ryu.lib.dpid import dpid_to_str
+from ryu.ofproto.ofproto_v1_0 import OFPP_CONTROLLER
 
 
 LOG = logging.getLogger('ryu.lib.ofctl_v1_0')
@@ -33,7 +34,10 @@ def to_actions(dp, acts):
         action_type = a.get('type')
         if action_type == 'OUTPUT':
             out_port = int(a.get('port', ofproto_v1_0.OFPP_NONE))
-            actions.append(dp.ofproto_parser.OFPActionOutput(out_port))
+            if out_port == OFPP_CONTROLLER:
+                actions.append(dp.ofproto_parser.OFPActionOutput(out_port, 100))
+            else:
+                actions.append(dp.ofproto_parser.OFPActionOutput(out_port))
         elif action_type == 'SET_VLAN_VID':
             vlan_vid = int(a.get('vlan_vid', 0xffff))
             actions.append(dp.ofproto_parser.OFPActionVlanVid(vlan_vid))

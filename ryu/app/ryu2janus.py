@@ -218,10 +218,14 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
     def install_tp_src(self, nw_src, nw_dst, tp_dport, tp_sport):
         if tp_dport == 53 and nw_dst in self._dns_servers:
             return False
+        if tp_dport == 80 or tp_dport == 443:
+            return False
         return True
 
     def install_tp_dst(self, nw_src, nw_dst, tp_dport, tp_sport):
         if tp_sport == 53 and nw_src in self._dns_servers:
+            return False
+        if tp_sport == 80 or tp_sport == 443:
             return False
         return True
 
@@ -544,7 +548,7 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
                     actions.append(datapath.ofproto_parser.OFPActionSetDlDst(client_mac))
                     (id, pr, eth_t, acts, out_ports,
                         idle_timeout, hard_timeout,
-                        with_src) = self.flow_store.get_flow(
+                        with_src, extra_match) = self.flow_store.get_flow(
                                                    datapath.id, msg.in_port,
                                                     haddr_to_str(dl_src), haddr_to_str(client_mac),
                                                     _eth_type, nw_proto = ip_proto,
@@ -564,7 +568,7 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
         if r1 == 1:
             (id, pr, eth_t, acts, out_ports,
                 idle_timeout, hard_timeout,
-                with_src) = self.flow_store.get_flow(
+                with_src, extra_match) = self.flow_store.get_flow(
                                            datapath.id, msg.in_port,
                                             haddr_to_str(dl_src), haddr_to_str(dl_dst),
                                             _eth_type, nw_proto = ip_proto,
@@ -579,6 +583,8 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
                     temp_src = None
                 else:
                     temp_src = dl_src
+                    if extra_match:
+                        extra_header_info = extra_match
                     if self.consider_extra_header:
                         extra_header_info = {}
                         if src_ip:
