@@ -26,7 +26,7 @@ from ryu.exception import MacAddressDuplicated, MacAddressNotFound
 from ryu.exception import BondPortAlreadyBonded, BondAlreadyExist, BondPortNotFound, BondNotFound
 from ryu.exception import FlowSpaceIDAlreadyExist, NetworkAlreadyAssigned
 from ryu.app.rest_nw_id import NW_ID_EXTERNAL
-from sqlalchemy.ext.sqlsoup import SqlSoup
+from sqlsoup import SQLSoup as SqlSoup
 from sqlalchemy import create_engine, MetaData
 from sqlalchemy import Table, Column, Integer, String
 from sqlalchemy import and_

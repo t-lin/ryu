@@ -162,11 +162,16 @@ class LLDP(dpkt.Packet):
 
         while buf:
             tlv_type = LLDPBasicTLV.get_type(buf)
+            #print "tlv_type = %s" %tlv_type
             basic_tlv = self._tlv_parsers[tlv_type](buf)
             self.tlvs.append(basic_tlv)
             buf = buf[len(basic_tlv):]
-            if ((len(buf) > 0 and basic_tlv.tlv_type == LLDP_TLV_END) or
-                (len(buf) == 0 and basic_tlv.tlv_type != LLDP_TLV_END)):
+            #if ((len(buf) > 0 and basic_tlv.tlv_type == LLDP_TLV_END) or
+            #    (len(buf) == 0 and basic_tlv.tlv_type != LLDP_TLV_END)):
+            #if #((len(buf) > 0 and basic_tlv.tlv_type == LLDP_TLV_END) or
+            if basic_tlv.tlv_type == LLDP_TLV_END:
+                break
+            if (len(buf) == 0 and basic_tlv.tlv_type != LLDP_TLV_END):
                 raise dpkt.UnpackError('invalid tlv len %d type %d' %
                                        (len(buf), basic_tlv.tlv_type))
 

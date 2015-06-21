@@ -79,7 +79,7 @@ class StatsController(ControllerBase):
         self._dns_servers = []
         self._dns_servers.append('8.8.8.8')
         self._dns_servers.append('4.4.4.4')
-        self.consider_extra_header = True
+        self.consider_extra_header = False
         assert self.mac2port is not None
         assert self.flow_store is not None
         assert self.api_db is not None

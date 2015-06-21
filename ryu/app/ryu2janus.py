@@ -107,7 +107,7 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
         self._dns_servers = []
         self._dns_servers.append('8.8.8.8')
         self._dns_servers.append('4.4.4.4')
-        self.consider_extra_header = True
+        self.consider_extra_header = False
 
         if self.second_janus and self.second_host and self.second_port:
             in_file = FLAGS.dpid_file
