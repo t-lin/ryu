@@ -1,5 +1,4 @@
-# Copyright (C) 2011 Nippon Telegraph and Telephone Corporation.
-# Copyright (C) 2011 Isaku Yamahata <yamahata at valinux co jp>
+# Copyright (C) 2012 Nippon Telegraph and Telephone Corporation.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,3 +13,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
+IPPROTO_IP = 0
+IPPROTO_HOPOPTS = 0
+IPPROTO_ICMP = 1
+IPPROTO_TCP = 6
+IPPROTO_UDP = 17
+IPPROTO_ROUTING = 43
+IPPROTO_FRAGMENT = 44
+IPPROTO_AH = 51
+IPPROTO_ICMPV6 = 58
+IPPROTO_NONE = 59
+IPPROTO_DSTOPTS = 60
+IPPROTO_SCTP = 132

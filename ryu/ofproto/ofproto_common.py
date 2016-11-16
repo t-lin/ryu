@@ -1,4 +1,4 @@
-# Copyright (C) 2011 Nippon Telegraph and Telephone Corporation.
+# Copyright (C) 2011, 2012 Nippon Telegraph and Telephone Corporation.
 # Copyright (C) 2011 Isaku Yamahata <yamahata at valinux co jp>
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,3 +14,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from struct import calcsize
+
+
+OFP_HEADER_PACK_STR = '!BBHI'
+OFP_HEADER_SIZE = 8
+assert calcsize(OFP_HEADER_PACK_STR) == OFP_HEADER_SIZE
+
+OFP_TCP_PORT = 6633
+OFP_SSL_PORT = 6633

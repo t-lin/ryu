@@ -57,7 +57,7 @@ OFPT_ROLE_REPLY = 25    # Controller/switch message
 
 OFPT_GET_ASYNC_REQUEST = 26    # Controller/switch message
 OFPT_GET_ASYNC_REPLY = 27    # Controller/switch message
-OFPT_GET_ASYNC = 28    # Controller/switch message
+OFPT_SET_ASYNC = 28    # Controller/switch message
 
 OFPT_METER_MOD = 29    # Controller/switch message
 
@@ -206,7 +206,7 @@ OFPXMT_OFB_IPV6_ND_SLL = 32  # Source link-layer for ND.
 OFPXMT_OFB_IPV6_ND_TLL = 33  # Target link-layer for ND.
 OFPXMT_OFB_MPLS_LABEL = 34  # MPLS label.
 OFPXMT_OFB_MPLS_TC = 35  # MPLS TC.
-OFPXMT_OFP_MPLS_BOS = 36  # MPLS BoS bit.
+OFPXMT_OFB_MPLS_BOS = 36  # MPLS BoS bit.
 OFPXMT_OFB_PBB_ISID = 37  # PBB I-SID.
 OFPXMT_OFB_TUNNEL_ID = 38  # Logical Port Metadata.
 OFPXMT_OFB_IPV6_EXTHDR = 39  # IPv6 Extension Header pseudo-field
@@ -229,11 +229,11 @@ OFPIEH_UNSEQ = 1 << 8    # Unexpected sequencing encountered.
 # ofp_oxm_experimenter_header
 OFP_OXM_EXPERIMENTER_HEADER_PACK_STR = '!II'
 OFP_OXM_EXPERIMENTER_HEADER_SIZE = 8
-assert (calcsize(OFP_OXM_EXPERIMENTER_HEADER_PACK_STR) +
-        OFP_OXM_EXPERIMENTER_HEADER_SIZE) == OFP_OXM_EXPERIMENTER_HEADER_SIZE
+assert (calcsize(OFP_OXM_EXPERIMENTER_HEADER_PACK_STR) ==
+        OFP_OXM_EXPERIMENTER_HEADER_SIZE)
 
 # enum ofp_instruction_type
-OFPID_GOTO_TABLE = 1  # Setup the next table in the lookup pipeline.
+OFPIT_GOTO_TABLE = 1  # Setup the next table in the lookup pipeline.
 OFPIT_WRITE_METADATA = 2  # Setup the metadata field for use later in
                           # pipeline.
 OFPIT_WRITE_ACTIONS = 3  # Write the action(s) onto the datapath
@@ -380,7 +380,7 @@ OFPTT_ALL = 0xff
 # struct ofp_table_mod
 OFP_TABLE_MOD_PACK_STR = '!B3xI'
 OFP_TABLE_MOD_SIZE = 16
-assert (calcsize(OFP_TABLE_MOD_PACK_STR + OFP_HEADER_SIZE) ==
+assert (calcsize(OFP_TABLE_MOD_PACK_STR) + OFP_HEADER_SIZE ==
         OFP_TABLE_MOD_SIZE)
 
 _OFP_FLOW_MOD_PACK_STR0 = 'QQBBHHHIIIH2x'
@@ -474,7 +474,7 @@ assert (calcsize(OFP_METER_BAND_DROP_PACK_STR) ==
         OFP_METER_BAND_DROP_SIZE)
 
 # struct ofp_meter_band_dscp_remark
-OFP_METER_BAND_DSCP_REMARK_PACK_STR = '!HHIIH3x'
+OFP_METER_BAND_DSCP_REMARK_PACK_STR = '!HHIIB3x'
 OFP_METER_BAND_DSCP_REMARK_SIZE = 16
 assert (calcsize(OFP_METER_BAND_DSCP_REMARK_PACK_STR) ==
         OFP_METER_BAND_DSCP_REMARK_SIZE)
@@ -526,11 +526,11 @@ DESC_STR_LEN_STR = str(DESC_STR_LEN)
 SERIAL_NUM_LEN = 32
 SERIAL_NUM_LEN_STR = str(SERIAL_NUM_LEN)
 OFP_DESC_PACK_STR = '!' + \
-                    DESC_STR_LEN + 'c' + \
-                    DESC_STR_LEN + 'c' + \
-                    DESC_STR_LEN + 'c' + \
-                    SERIAL_NUM_LEN + 'c' + \
-                    DESC_STR_LEN + 'c'
+                    DESC_STR_LEN_STR + 'c' + \
+                    DESC_STR_LEN_STR + 'c' + \
+                    DESC_STR_LEN_STR + 'c' + \
+                    SERIAL_NUM_LEN_STR + 'c' + \
+                    DESC_STR_LEN_STR + 'c'
 OFP_DESC_SIZE = 1056
 assert calcsize(OFP_DESC_PACK_STR) == OFP_DESC_SIZE
 
@@ -763,11 +763,11 @@ assert (calcsize(OFP_ASYNC_CONFIG_PACK_STR) + OFP_HEADER_SIZE ==
         OFP_ASYNC_CONFIG_SIZE)
 
 # struct ofp_packet_in
-OFP_PACKET_IN_PACK_STR = '!IHBBQ' + _OFP_MATCH_PACK_STR
+OFP_PACKET_IN_PACK_STR = '!IHBBQ'
 OFP_PACKET_IN_SIZE = 32
 OFP_PACKET_IN_DATA_OFFSET = 18
-assert (calcsize(OFP_PACKET_IN_PACK_STR) + OFP_HEADER_SIZE ==
-       OFP_PACKET_IN_SIZE)
+assert (calcsize(OFP_PACKET_IN_PACK_STR) + OFP_MATCH_SIZE + OFP_HEADER_SIZE ==
+        OFP_PACKET_IN_SIZE)
 
 # enum ofp_packet_in_reason
 OFPR_NO_MATCH = 0    # No matching flow.
@@ -1005,6 +1005,95 @@ OFP_EXPERIMENTER_HEADER_PACK_STR = '!II'
 OFP_EXPERIMENTER_HEADER_SIZE = 16
 assert (calcsize(OFP_EXPERIMENTER_HEADER_PACK_STR) + OFP_HEADER_SIZE
         == OFP_EXPERIMENTER_HEADER_SIZE)
+
+# struct ofp_hello
+OFP_HELLO_HEADER_SIZE = 8
+
+# struct ofp_hello_elem_header
+OFP_HELLO_ELEM_HEADER_PACK_STR = '!HH'
+OFP_HELLO_ELEM_HEADER_SIZE = 4
+assert (calcsize(OFP_HELLO_ELEM_HEADER_PACK_STR) == OFP_HELLO_ELEM_HEADER_SIZE)
+
+# enum ofp_hello_elem_type
+OFPHET_VERSIONBITMAP = 1
+
+# struct ofp_hello_elem_versionbitmap
+OFP_HELLO_ELEM_VERSIONBITMAP_HEADER_PACK_STR = '!HH'
+OFP_HELLO_ELEM_VERSIONBITMAP_HEADER_SIZE = 4
+assert (calcsize(OFP_HELLO_ELEM_VERSIONBITMAP_HEADER_PACK_STR) ==
+        OFP_HELLO_ELEM_VERSIONBITMAP_HEADER_SIZE)
+
+# OXM
+
+
+def _oxm_tlv_header(class_, field, hasmask, length):
+    return (class_ << 16) | (field << 9) | (hasmask << 8) | length
+
+
+def oxm_tlv_header(field, length):
+    return _oxm_tlv_header(OFPXMC_OPENFLOW_BASIC, field, 0, length)
+
+
+def oxm_tlv_header_w(field, length):
+    return _oxm_tlv_header(OFPXMC_OPENFLOW_BASIC, field, 1, length * 2)
+
+
+OXM_OF_IN_PORT = oxm_tlv_header(OFPXMT_OFB_IN_PORT, 4)
+OXM_OF_IN_PHY_PORT = oxm_tlv_header(OFPXMT_OFB_IN_PHY_PORT, 4)
+OXM_OF_METADATA = oxm_tlv_header(OFPXMT_OFB_METADATA, 8)
+OXM_OF_METADATA_W = oxm_tlv_header_w(OFPXMT_OFB_METADATA, 8)
+OXM_OF_ETH_DST = oxm_tlv_header(OFPXMT_OFB_ETH_DST, 6)
+OXM_OF_ETH_DST_W = oxm_tlv_header_w(OFPXMT_OFB_ETH_DST, 6)
+OXM_OF_ETH_SRC = oxm_tlv_header(OFPXMT_OFB_ETH_SRC, 6)
+OXM_OF_ETH_SRC_W = oxm_tlv_header_w(OFPXMT_OFB_ETH_SRC, 6)
+OXM_OF_ETH_TYPE = oxm_tlv_header(OFPXMT_OFB_ETH_TYPE, 2)
+OXM_OF_VLAN_VID = oxm_tlv_header(OFPXMT_OFB_VLAN_VID, 2)
+OXM_OF_VLAN_VID_W = oxm_tlv_header_w(OFPXMT_OFB_VLAN_VID, 2)
+OXM_OF_VLAN_PCP = oxm_tlv_header(OFPXMT_OFB_VLAN_PCP, 1)
+OXM_OF_IP_DSCP = oxm_tlv_header(OFPXMT_OFB_IP_DSCP, 1)
+OXM_OF_IP_ECN = oxm_tlv_header(OFPXMT_OFB_IP_ECN, 1)
+OXM_OF_IP_PROTO = oxm_tlv_header(OFPXMT_OFB_IP_PROTO, 1)
+OXM_OF_IPV4_SRC = oxm_tlv_header(OFPXMT_OFB_IPV4_SRC, 4)
+OXM_OF_IPV4_SRC_W = oxm_tlv_header_w(OFPXMT_OFB_IPV4_SRC, 4)
+OXM_OF_IPV4_DST = oxm_tlv_header(OFPXMT_OFB_IPV4_DST, 4)
+OXM_OF_IPV4_DST_W = oxm_tlv_header_w(OFPXMT_OFB_IPV4_DST, 4)
+OXM_OF_TCP_SRC = oxm_tlv_header(OFPXMT_OFB_TCP_SRC, 2)
+OXM_OF_TCP_DST = oxm_tlv_header(OFPXMT_OFB_TCP_DST, 2)
+OXM_OF_UDP_SRC = oxm_tlv_header(OFPXMT_OFB_UDP_SRC, 2)
+OXM_OF_UDP_DST = oxm_tlv_header(OFPXMT_OFB_UDP_DST, 2)
+OXM_OF_SCTP_SRC = oxm_tlv_header(OFPXMT_OFB_SCTP_SRC, 2)
+OXM_OF_SCTP_DST = oxm_tlv_header(OFPXMT_OFB_SCTP_DST, 2)
+OXM_OF_ICMPV4_TYPE = oxm_tlv_header(OFPXMT_OFB_ICMPV4_TYPE, 1)
+OXM_OF_ICMPV4_CODE = oxm_tlv_header(OFPXMT_OFB_ICMPV4_CODE, 1)
+OXM_OF_ARP_OP = oxm_tlv_header(OFPXMT_OFB_ARP_OP, 2)
+OXM_OF_ARP_SPA = oxm_tlv_header(OFPXMT_OFB_ARP_SPA, 4)
+OXM_OF_ARP_SPA_W = oxm_tlv_header_w(OFPXMT_OFB_ARP_SPA, 4)
+OXM_OF_ARP_TPA = oxm_tlv_header(OFPXMT_OFB_ARP_TPA, 4)
+OXM_OF_ARP_TPA_W = oxm_tlv_header_w(OFPXMT_OFB_ARP_TPA, 4)
+OXM_OF_ARP_SHA = oxm_tlv_header(OFPXMT_OFB_ARP_SHA, 6)
+OXM_OF_ARP_SHA_W = oxm_tlv_header_w(OFPXMT_OFB_ARP_SHA, 6)
+OXM_OF_ARP_THA = oxm_tlv_header(OFPXMT_OFB_ARP_THA, 6)
+OXM_OF_ARP_THA_W = oxm_tlv_header_w(OFPXMT_OFB_ARP_THA, 6)
+OXM_OF_IPV6_SRC = oxm_tlv_header(OFPXMT_OFB_IPV6_SRC, 16)
+OXM_OF_IPV6_SRC_W = oxm_tlv_header_w(OFPXMT_OFB_IPV6_SRC, 16)
+OXM_OF_IPV6_DST = oxm_tlv_header(OFPXMT_OFB_IPV6_DST, 16)
+OXM_OF_IPV6_DST_W = oxm_tlv_header_w(OFPXMT_OFB_IPV6_DST, 16)
+OXM_OF_IPV6_FLABEL = oxm_tlv_header(OFPXMT_OFB_IPV6_FLABEL, 4)
+OXM_OF_IPV6_FLABEL_W = oxm_tlv_header_w(OFPXMT_OFB_IPV6_FLABEL, 4)
+OXM_OF_ICMPV6_TYPE = oxm_tlv_header(OFPXMT_OFB_ICMPV6_TYPE, 1)
+OXM_OF_ICMPV6_CODE = oxm_tlv_header(OFPXMT_OFB_ICMPV6_CODE, 1)
+OXM_OF_IPV6_ND_TARGET = oxm_tlv_header(OFPXMT_OFB_IPV6_ND_TARGET, 16)
+OXM_OF_IPV6_ND_SLL = oxm_tlv_header(OFPXMT_OFB_IPV6_ND_SLL, 6)
+OXM_OF_IPV6_ND_TLL = oxm_tlv_header(OFPXMT_OFB_IPV6_ND_TLL, 6)
+OXM_OF_MPLS_LABEL = oxm_tlv_header(OFPXMT_OFB_MPLS_LABEL, 4)
+OXM_OF_MPLS_TC = oxm_tlv_header(OFPXMT_OFB_MPLS_TC, 1)
+OXM_OF_MPLS_BOS = oxm_tlv_header(OFPXMT_OFB_MPLS_BOS, 1)
+OXM_OF_PBB_ISID = oxm_tlv_header(OFPXMT_OFB_PBB_ISID, 3)
+OXM_OF_PBB_ISID_W = oxm_tlv_header_w(OFPXMT_OFB_PBB_ISID, 3)
+OXM_OF_TUNNEL_ID = oxm_tlv_header(OFPXMT_OFB_TUNNEL_ID, 8)
+OXM_OF_TUNNEL_ID_W = oxm_tlv_header_w(OFPXMT_OFB_TUNNEL_ID, 8)
+OXM_OF_IPV6_EXTHDR = oxm_tlv_header(OFPXMT_OFB_IPV6_EXTHDR, 2)
+OXM_OF_IPV6_EXTHDR_W = oxm_tlv_header_w(OFPXMT_OFB_IPV6_EXTHDR, 2)
 
 # define constants
 OFP_VERSION = 0x04

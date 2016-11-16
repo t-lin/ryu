@@ -22,7 +22,8 @@ from ryu import exception
 from ryu.lib import mac
 from . import ofproto_parser
 from . import ofproto_v1_0
-from . import ofproto
+from . import ether
+from . import inet
 
 import logging
 LOG = logging.getLogger('ryu.ofproto.nx_match')
@@ -47,16 +48,6 @@ FWW_ALL = (1 << 13) - 1
 FLOW_NW_FRAG_ANY = 1 << 0
 FLOW_NW_FRAG_LATER = 1 << 1
 FLOW_NW_FRAG_MASK = FLOW_NW_FRAG_ANY | FLOW_NW_FRAG_LATER
-
-# Ethernet types, for set_dl_type()
-ETH_TYPE_IP = 0x0800
-ETH_TYPE_ARP = 0x0806
-ETH_TYPE_VLAN = 0x8100
-ETH_TYPE_IPV6 = 0x86dd
-ETH_TYPE_LACP = 0x8809
-
-IPPROTO_ICMP = 1
-IPPROTO_ICMPV6 = 58
 
 IP_ECN_MASK = 0x03
 IP_DSCP_MASK = 0xfc
@@ -297,6 +288,10 @@ class ClsRule(object):
         if self.wc.dl_dst_mask:
             return ofproto_v1_0.NXFF_NXM
 
+        # Masking DL_SRC is only supported by NXM
+        if self.wc.dl_src_mask:
+            return ofproto_v1_0.NXFF_NXM
+
         # ECN is only supported by NXM
         if not self.wc.wildcards & FWW_NW_ECN:
             return ofproto_v1_0.NXFF_NXM
@@ -305,22 +300,19 @@ class ClsRule(object):
 
     def match_tuple(self):
         assert self.flow_format() == ofproto_v1_0.NXFF_OPENFLOW10
-        wildcards = ofproto.OFPFW_ALL
+        wildcards = ofproto_v1_0.OFPFW_ALL
 
         if not self.wc.wildcards & FWW_IN_PORT:
-            wildcards &= ~ofproto.OFPFW_IN_PORT
+            wildcards &= ~ofproto_v1_0.OFPFW_IN_PORT
 
-        if self.flow.dl_src != mac.DONTCARE or self.wc.dl_src_mask:
-            wildcards &= ~ofproto.OFPFW_DL_SRC
+        if self.flow.dl_src != mac.DONTCARE:
+            wildcards &= ~ofproto_v1_0.OFPFW_DL_SRC
 
-        if self.flow.dl_dst != mac.DONTCARE or self.wc.dl_dst_mask:
-            wildcards &= ~ofproto.OFPFW_DL_DST
-
-        if self.wc.dl_dst_mask:
-            wildcards &= ~ofproto.OFPFW_DL_DST
+        if self.flow.dl_dst != mac.DONTCARE:
+            wildcards &= ~ofproto_v1_0.OFPFW_DL_DST
 
         if not self.wc.wildcards & FWW_DL_TYPE:
-            wildcards &= ~ofproto.OFPFW_DL_TYPE
+            wildcards &= ~ofproto_v1_0.OFPFW_DL_TYPE
 
         # FIXME: Add support for dl_vlan, fl_vlan_pcp, nw_tos, nw_proto,
         # nw_src, nw_dst, tp_src and dp_dst to self
@@ -717,7 +709,7 @@ class MFRegister(MFField):
     def put(self, buf, offset, rule):
         for i in range(FLOW_N_REGS):
             if (ofproto_v1_0.nxm_nx_reg(i) == self.nxm_header or
-                ofproto_v1_0.nxm_nx_reg_w(i) == self.nxm_header):
+                    ofproto_v1_0.nxm_nx_reg_w(i) == self.nxm_header):
                 if rule.wc.regs_mask[i]:
                     return self.putm(buf, offset, rule.flow.regs[i],
                                      rule.wc.regs_mask[i])
@@ -768,7 +760,7 @@ def serialize_nxm_match(rule, buf, offset):
         offset += nxm_put(buf, offset, ofproto_v1_0.NXM_OF_IP_PROTO, rule)
 
     if not rule.wc.wildcards & FWW_NW_PROTO and (rule.flow.nw_proto
-                                                 == IPPROTO_ICMP):
+                                                 == inet.IPPROTO_ICMP):
         if rule.wc.tp_src_mask != 0:
             offset += nxm_put(buf, offset, ofproto_v1_0.NXM_OF_ICMP_TYPE, rule)
         if rule.wc.tp_dst_mask != 0:
@@ -823,7 +815,7 @@ def serialize_nxm_match(rule, buf, offset):
 
     # IPv6
     if not rule.wc.wildcards & FWW_NW_PROTO and (rule.flow.nw_proto
-                                                 == IPPROTO_ICMPV6):
+                                                 == inet.IPPROTO_ICMPV6):
         if rule.wc.tp_src_mask != 0:
             offset += nxm_put(buf, offset, ofproto_v1_0.NXM_NX_ICMPV6_TYPE,
                               rule)

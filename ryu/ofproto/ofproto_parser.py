@@ -1,4 +1,4 @@
-# Copyright (C) 2011 Nippon Telegraph and Telephone Corporation.
+# Copyright (C) 2011, 2012 Nippon Telegraph and Telephone Corporation.
 # Copyright (C) 2011 Isaku Yamahata <yamahata at valinux co jp>
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,15 +19,15 @@ import struct
 
 from ryu import exception
 
-from . import ofproto
+from . import ofproto_common
 
 LOG = logging.getLogger('ryu.ofproto.ofproto_parser')
 
 
 def header(buf):
-    assert len(buf) >= ofproto.OFP_HEADER_SIZE
+    assert len(buf) >= ofproto_common.OFP_HEADER_SIZE
     #LOG.debug('len %d bufsize %d', len(buf), ofproto.OFP_HEADER_SIZE)
-    return struct.unpack_from(ofproto.OFP_HEADER_PACK_STR, buffer(buf))
+    return struct.unpack_from(ofproto_common.OFP_HEADER_PACK_STR, buffer(buf))
 
 
 _MSG_PARSERS = {}
@@ -93,7 +93,7 @@ class MsgBase(object):
 
         self.version = self.datapath.ofproto.OFP_VERSION
         self.msg_type = self.cls_msg_type
-        self.buf = bytearray().zfill(self.datapath.ofproto.OFP_HEADER_SIZE)
+        self.buf = bytearray(self.datapath.ofproto.OFP_HEADER_SIZE)
 
     def _serialize_header(self):
         # buffer length is determined after trailing data is formated.
@@ -122,7 +122,7 @@ class MsgBase(object):
 
 def msg_pack_into(fmt, buf, offset, *args):
     if len(buf) < offset:
-        buf += bytearray().zfill(offset - len(buf))
+        buf += bytearray(offset - len(buf))
 
     if len(buf) == offset:
         buf += struct.pack(fmt, *args)
@@ -130,7 +130,7 @@ def msg_pack_into(fmt, buf, offset, *args):
 
     needed_len = offset + struct.calcsize(fmt)
     if len(buf) < needed_len:
-        buf += bytearray().zfill(needed_len - len(buf))
+        buf += bytearray(needed_len - len(buf))
 
     struct.pack_into(fmt, buf, offset, *args)
 

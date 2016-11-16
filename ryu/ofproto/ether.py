@@ -1,5 +1,4 @@
-# Copyright (C) 2011 Nippon Telegraph and Telephone Corporation.
-# Copyright (C) 2011 Isaku Yamahata <yamahata at valinux co jp>
+# Copyright (C) 2012 Nippon Telegraph and Telephone Corporation.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,3 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
+ETH_TYPE_IP = 0x0800
+ETH_TYPE_ARP = 0x0806
+ETH_TYPE_8021Q = 0x8100
+ETH_TYPE_IPV6 = 0x86dd
+ETH_TYPE_MPLS = 0x8847
+ETH_TYPE_SLOW = 0x8809

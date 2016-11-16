@@ -21,15 +21,18 @@ import gevent
 import traceback
 import random
 import greenlet
+import ssl
 from gevent.server import StreamServer
 from gevent.queue import Queue
 
-from ryu.ofproto import ofproto
+from ryu.ofproto import ofproto_common
 from ryu.ofproto import ofproto_parser
 from ryu.ofproto import ofproto_v1_0
 from ryu.ofproto import ofproto_v1_0_parser
 from ryu.ofproto import ofproto_v1_2
 from ryu.ofproto import ofproto_v1_2_parser
+from ryu.ofproto import ofproto_v1_3
+from ryu.ofproto import ofproto_v1_3_parser
 from ryu.ofproto import nx_match
 
 from ryu.controller import dispatcher
@@ -40,8 +43,13 @@ LOG = logging.getLogger('ryu.controller.controller')
 
 FLAGS = gflags.FLAGS
 gflags.DEFINE_string('ofp_listen_host', '', 'openflow listen host')
-gflags.DEFINE_integer('ofp_tcp_listen_port', ofproto.OFP_TCP_PORT,
+gflags.DEFINE_integer('ofp_tcp_listen_port', ofproto_common.OFP_TCP_PORT,
                       'openflow tcp listen port')
+gflags.DEFINE_integer('ofp_ssl_listen_port', ofproto_common.OFP_SSL_PORT,
+                      'openflow ssl listen port')
+gflags.DEFINE_string('ctl_privkey', None, 'controller private key')
+gflags.DEFINE_string('ctl_cert', None, 'controller certificate')
+gflags.DEFINE_string('ca_certs', None, 'CA certificates')
 
 
 class OpenFlowController(object):
@@ -54,9 +62,28 @@ class OpenFlowController(object):
         self.server_loop()
 
     def server_loop(self):
-        server = StreamServer((FLAGS.ofp_listen_host,
-                               FLAGS.ofp_tcp_listen_port),
-                              datapath_connection_factory)
+        if FLAGS.ctl_privkey and FLAGS.ctl_cert is not None:
+            if FLAGS.ca_certs is not None:
+                server = StreamServer((FLAGS.ofp_listen_host,
+                                       FLAGS.ofp_ssl_listen_port),
+                                      datapath_connection_factory,
+                                      keyfile=FLAGS.ctl_privkey,
+                                      certfile=FLAGS.ctl_cert,
+                                      cert_reqs=ssl.CERT_REQUIRED,
+                                      ca_certs=FLAGS.ca_certs,
+                                      ssl_version=ssl.PROTOCOL_TLSv1)
+            else:
+                server = StreamServer((FLAGS.ofp_listen_host,
+                                       FLAGS.ofp_ssl_listen_port),
+                                      datapath_connection_factory,
+                                      keyfile=FLAGS.ctl_privkey,
+                                      certfile=FLAGS.ctl_cert,
+                                      ssl_version=ssl.PROTOCOL_TLSv1)
+        else:
+            server = StreamServer((FLAGS.ofp_listen_host,
+                                   FLAGS.ofp_tcp_listen_port),
+                                  datapath_connection_factory)
+
         #LOG.debug('loop')
         server.serve_forever()
 
@@ -68,7 +95,7 @@ def _deactivate(method):
         except greenlet.GreenletExit:
             pass
         except:
-            traceback.print_stack()
+            traceback.print_exc()
             raise
         finally:
             self.is_active = False
@@ -81,7 +108,9 @@ class Datapath(object):
                                    ofproto_v1_0_parser),
         ofproto_v1_2.OFP_VERSION: (ofproto_v1_2,
                                    ofproto_v1_2_parser),
-        }
+        ofproto_v1_3.OFP_VERSION: (ofproto_v1_3,
+                                   ofproto_v1_3_parser),
+    }
 
     def __init__(self, socket, address):
         super(Datapath, self).__init__()
@@ -102,7 +131,6 @@ class Datapath(object):
         self.set_version(max(self.supported_ofp_version))
         self.xid = random.randint(0, self.ofproto.MAX_XID)
         self.id = None  # datapath_id is unknown yet
-        self.ports = None
         self.flow_format = ofproto_v1_0.NXFF_OPENFLOW10
 
     def close(self):
@@ -122,7 +150,7 @@ class Datapath(object):
     @_deactivate
     def _recv_loop(self):
         buf = bytearray()
-        required_len = ofproto.OFP_HEADER_SIZE
+        required_len = ofproto_common.OFP_HEADER_SIZE
 
         count = 0
         while self.is_active:
@@ -143,7 +171,7 @@ class Datapath(object):
                 self.ev_q.queue(ofp_event.ofp_msg_to_ev(msg))
 
                 buf = buf[required_len:]
-                required_len = ofproto.OFP_HEADER_SIZE
+                required_len = ofproto_common.OFP_HEADER_SIZE
 
                 # We need to schedule other greenlets. Otherwise, ryu
                 # can't accept new switches or handle the existing
@@ -260,6 +288,9 @@ class Datapath(object):
         # ofproto_v1_0.NXFF_OPENFLOW10 but currently isn't.
         self.send_msg(set_format)
         self.send_barrier()
+
+    def is_reserved_port(self, port_no):
+        return port_no > self.ofproto.OFPP_MAX
 
 
 def datapath_connection_factory(socket, address):

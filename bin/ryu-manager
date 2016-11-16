@@ -51,6 +51,8 @@ def main():
 
     log.init_log()
 
+    FLAGS.app_lists += ['ryu.controller.ofp_handler']
+
     if len(args) > 1:
         FLAGS.app_lists += args[1:]
 
