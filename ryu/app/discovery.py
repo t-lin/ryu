@@ -28,7 +28,8 @@ from ryu.base import app_manager
 from ryu.controller import (dpset,
                             handler,
                             link_set,
-                            ofp_event)
+                            ofp_event,
+                            mac_to_port)
 from ryu.controller.link_set import (Link,
                                      LinkSet)
 from ryu.lib import (linked_dict,
@@ -219,6 +220,8 @@ class LLDPPacket(object):
 class Discovery(app_manager.RyuApp):
     _CONTEXTS = {'dpset': dpset.DPSet,
                  'link_set': LinkSet,
+                 'ext_ports': dict,
+                 'mac2ext_port': mac_to_port.MacToPortTable,
                  }
 
     # TODO:XXX what's appropriate parameter? adaptive?
@@ -236,6 +239,8 @@ class Discovery(app_manager.RyuApp):
         super(Discovery, self).__init__(*args, **kwargs)
         self.dpset = kwargs['dpset']
         self.link_set = kwargs['link_set']
+        self.ext_ports = kwargs['ext_ports'] # Ports not within topology
+        self.mac2ext_port = kwargs['mac2ext_port']
         self.install_flow = kwargs.get('install_flow',
                                        FLAGS.discovery_install_flow)
         self.explicit_drop = kwargs.get('explicit_drop',
@@ -248,6 +253,35 @@ class Discovery(app_manager.RyuApp):
         self.threads = []
         self.threads.append(gevent.spawn_later(0, self.lldp_loop))
         self.threads.append(gevent.spawn_later(0, self.link_loop))
+        self.threads.append(gevent.spawn_later(0, self.ext_ports_loop))
+
+    # Keeps data structure of external ports up to date
+    # Do this within loop rather than triggering on OF port status updates
+    # as ports may dynamically become/lose their status as external ports
+    #
+    # External ports are those seen by OpenFlow, but not part of a link
+    # within the topology. These may be connected to hosts or networks
+    # not controlled by this controller
+    def ext_ports_loop(self):
+        while True:
+            dp_list = self.dpset.dps.values() # Datapath objects
+            for dp in dp_list:
+                ext_port_list = []
+                port_list = self.port_set.get_dp_port(dp)
+                #print "DPID: %s" % dp.id
+
+                for port in port_list:
+                    #status = "Down" if self.port_set.get_port(dp, port).is_down else "Up"
+                    #print "\tPort %s, status = %s, connected to host %s" % (port, status, host_port)
+                    host_port = True if not self.link_set.port_exists(dp.id, port) else False
+
+                    if host_port:
+                        ext_port_list.append(port)
+
+                self.ext_ports[dp.id] = ext_port_list
+
+            #print "\n=============="
+            time.sleep(1)
 
     def close(self):
         self.is_active = False
@@ -343,6 +377,23 @@ class Discovery(app_manager.RyuApp):
         except LLDPPacket.NotLLDP as e:
             # This handler can receive all the packtes which can be
             # not-LLDP packet. Ignore it silently
+
+            # But first, record info about the ingress ports of MACs
+            if msg.in_port in self.ext_ports.get(msg.datapath.id, []):
+                dst, src = struct.unpack_from('!6s6s', buffer(msg.data), 0)
+
+                self.mac2ext_port.dpid_add(msg.datapath.id)
+
+                # Find if MAC currently exists, if so, delete it
+                # This case may exist if hosts migrate
+                for dpid in self.mac2ext_port.mac_to_port.keys():
+                    port = self.mac2ext_port.port_get(dpid, src)
+                    if port:
+                        self.mac2ext_port.mac_del(dpid, src)
+                        break
+
+                self.mac2ext_port.port_add(msg.datapath.id, msg.in_port, src)
+
             return
         except LLDPPacket.LLDPUnknownFormat as e:
             # There is some error with the LLDP packet's formatting

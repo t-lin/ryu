@@ -133,6 +133,16 @@ class LinkSet(dict):
 
         return dst
 
+    # Checks if this port exists as part of a link within this topology
+    # If port exists as part of a link, there should be an endpoint port
+    # Ports not in the topology but exists in OpenFlow may be connected to hosts
+    # or networks not controlled by this controller
+    def port_exists(self, dpid, port_no):
+        src = DPPort(dpid, port_no)
+        dst = self._map.get(src, None)
+
+        return True if dst else False
+
     # for discovery REST API
     def get_items(self, dpid=None):
         if dpid is None:
