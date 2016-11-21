@@ -306,7 +306,8 @@ class Discovery(app_manager.RyuApp):
                 actions = [output]
                 dp.send_flow_mod(
                     rule=rule, cookie=0, command=ofproto.OFPFC_ADD,
-                    idle_timeout=0, hard_timeout=0, actions=actions)
+                    idle_timeout=0, hard_timeout=0,
+                    priority=(0x10000 - 1), actions=actions)
 
     def _port_added(self, dp, port):
         port_no = port.port_no

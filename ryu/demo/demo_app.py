@@ -9,6 +9,7 @@ from ryu.controller.handler import CONFIG_DISPATCHER
 from ryu.controller.handler import set_ev_cls
 from ryu.ofproto import nx_match
 from ryu.lib.mac import haddr_to_str
+from ryu.lib.lldp import ETH_TYPE_LLDP
 from ryu.lib import mac
 
 
@@ -30,6 +31,11 @@ class DemoApp(object):
 
         dst, src, _eth_type = struct.unpack_from('!6s6sH', buffer(msg.data), 0)
 
+        # In case this app is used in conjunction with the topology discovery
+        # app, we should ignore all LLDP packets
+        if _eth_type == ETH_TYPE_LLDP:
+            return
+
         dpid = datapath.id # Switch ID
         self.mac2port.setdefault(dpid, {})  # Create new record for this switch
                                             # if it didn't exist before
@@ -38,11 +44,11 @@ class DemoApp(object):
         self.mac2port[dpid][src] = msg.in_port  # Save record of port number
                                                 # associated with MAC address
         broadcast = (dst == mac.BROADCAST) or mac.is_multicast(dst)
-	
+
         if broadcast:
             out_port = ofproto.OFPP_FLOOD
             LOG.info("broadcast frame, flood and install flow")
-        else:		
+        else:
             if src != dst:
                 # Fetch port number associated with destination MAC
                 # Return None if no record exists
