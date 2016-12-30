@@ -65,6 +65,7 @@ gflags.DEFINE_integer('second_janus_port', '8091', 'Second Janus admin API port'
 LOG = logging.getLogger('ryu.app.ryu2janus')
 
 OFI_ETH_TYPE_IP = 2048
+OFI_ETH_TYPE_IPV6 = 0x86DD
 OFI_ETH_TYPE_ARP = 0x806
 OFI_UDP = 17
 BOOTP_CLIENT_PORT_PORT_NUMBER = 68
@@ -732,11 +733,12 @@ class Ryu2JanusForwarding(app_manager.RyuApp):
 
             dp.send_msg(flow_mod)
 
-            # drop all IPv6 unicast
+            # drop all IPv6
             flow = {}
-            flow['dl_dst'] = '33:33:00:00:00:01'
+            flow['dl_type'] = OFI_ETH_TYPE_IPV6
+            # '33:33:00:00:00:01'
             match = ofctl_v1_0.to_match(dp, flow)
-            priority = 100
+            priority = OFP_DEFAULT_PRIORITY + 100
             out_port = int(flow.get('out_port', ofproto_v1_0.OFPP_NONE))
             actions = []
 
