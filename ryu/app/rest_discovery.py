@@ -38,14 +38,22 @@ LOG = logging.getLogger('ryu.app.rest_savi')
 ## define db interface and store those information into db
 
 # REST API
+# NOTE: These APIs deal with DPIDs returned in hex format
+#       Conversely, ofctl_rest uses DPIDs in integer format
 
 ## Retrieve topology
 #
 # get all the links
 # GET /topology/links
 #
+# get all the switches
+# GET /topology/switches
+#
 # get the links connected <dpid>
-# GET /topology/switch/dpid>/links
+# GET /topology/switch/<dpid>/links
+#
+# get ingress port of a MAC address
+# GET /topology/mac/<mac>
 #
 class DiscoveryController(ControllerBase):
     def __init__(self, req, link, data, **config):
@@ -99,8 +107,8 @@ class DiscoveryController(ControllerBase):
         for dpid in self.mac2ext_port.mac_to_port.keys():
             port = self.mac2ext_port.port_get(dpid, mac_bin)
             if port:
-                #print "ingress port found: dpid = %s and port = %s" % (dpid, port)
-                body = {"dpid": dpid, "port": port}
+                #print "ingress port found: dpid = %016x and port = %s" % (dpid, port)
+                body = {"dpid": lib_dpid.dpid_to_str(dpid), "port": port}
                 break
 
         #if body is None:
