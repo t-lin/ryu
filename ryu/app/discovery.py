@@ -20,6 +20,7 @@ import gflags
 import logging
 import struct
 import time
+from collections import deque
 from dpkt.ethernet import Ethernet
 
 
@@ -235,6 +236,8 @@ class Discovery(app_manager.RyuApp):
 
     LLDP_PACKET_LEN = len(LLDPPacket.lldp_packet(0, 0, mac.DONTCARE, 0))
 
+    RTT_SAMPLE_WINDOW = 60
+
     def __init__(self, *args, **kwargs):
         super(Discovery, self).__init__(*args, **kwargs)
         self.dpset = kwargs['dpset']
@@ -247,6 +250,10 @@ class Discovery(app_manager.RyuApp):
                                         FLAGS.discovery_explicit_drop)
 
         self.port_set = PortSet()
+
+        self.dp2rttSamples = {} # DPID to deque containing ctrl <=> switch RTTs
+        self.dp2avgRTT = {} # DPID to avg ctrl <=> switch RTT
+
         self.lldp_event = gevent.event.Event()
         self.link_event = gevent.event.Event()
         self.is_active = True
@@ -254,6 +261,40 @@ class Discovery(app_manager.RyuApp):
         self.threads.append(gevent.spawn_later(0, self.lldp_loop))
         self.threads.append(gevent.spawn_later(0, self.link_loop))
         self.threads.append(gevent.spawn_later(0, self.ext_ports_loop))
+        self.threads.append(gevent.spawn_later(0, self.of_conn_rtt_loop))
+
+    # Periodically send OFP Echo Requests to the switches
+    def of_conn_rtt_loop(self):
+        while True:
+            dp_list = self.dpset.dps.values() # Datapath objects
+            for dp in dp_list:
+                echo_req = dp.ofproto_parser.OFPEchoRequest(dp)
+                echo_req.data = "%lf" % time.time() # Regular str() function rounds
+                dp.send_msg(echo_req)
+                gevent.sleep(self.LLDP_SEND_GUARD)  # don't burst
+
+            time.sleep(1)
+
+    @handler.set_ev_cls(ofp_event.EventOFPEchoReply,
+        [handler.HANDSHAKE_DISPATCHER, handler.CONFIG_DISPATCHER, handler.MAIN_DISPATCHER])
+    def echo_reply_handler(self, ev):
+        msg = ev.msg
+        datapath = msg.datapath
+
+        rtt = (time.time() - float(msg.data)) * 1000 # RTT in ms
+        rtt_samples = self.dp2rttSamples.setdefault(datapath.id, deque())
+        avg_rtt = self.dp2avgRTT.get(datapath.id, 0)
+
+        rtt_samples.append(rtt)
+        if len(rtt_samples) >= self.RTT_SAMPLE_WINDOW:
+            # Simple moving avg
+            self.dp2avgRTT[datapath.id] = avg_rtt + \
+                ((rtt - rtt_samples.popleft()) / self.RTT_SAMPLE_WINDOW)
+        else:
+            self.dp2avgRTT[datapath.id] = sum(rtt_samples) / len(rtt_samples)
+
+        #LOG.debug("echo to dpid %s avg RTT is %lf ms" % (datapath.id, self.dp2avgRTT[datapath.id]))
+
 
     # Keeps data structure of external ports up to date
     # Do this within loop rather than triggering on OF port status updates
@@ -280,7 +321,6 @@ class Discovery(app_manager.RyuApp):
 
                 self.ext_ports[dp.id] = ext_port_list
 
-            #print "\n=============="
             time.sleep(1)
 
     def close(self):
