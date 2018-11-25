@@ -20,6 +20,7 @@ import gflags
 import logging
 import struct
 import time
+import uuid
 from collections import deque
 from dpkt.ethernet import Ethernet
 
@@ -42,7 +43,8 @@ from ryu.lib.lldp import (ChassisID,
                           End,
                           LLDP,
                           PortID,
-                          TTL)
+                          TTL,
+                          SystemName)
 from ryu.ofproto import nx_match
 
 
@@ -66,7 +68,7 @@ class PortData(object):
     def __init__(self, is_down, data):
         super(PortData, self).__init__()
         self.is_down = is_down
-        self.data = data
+        self.data = data # The serialized LLDP packet
         self.timestamp = None
         self.sent = 0
 
@@ -156,6 +158,49 @@ class LLDPPacket(object):
     PORT_ID_STR = '!I'      # uint32_t
     PORT_ID_SIZE = 4
 
+    # System name format: <sys name prefix>;<16-Byte Pkt ID>;<ctrl2switch RTT>
+    SYSTEM_NAME_PREFIX = "SAVI-SDN"
+    PKT_ID_START_IDX = 60 # Found from manual peeking
+                          # Is there a way to dynamically calculate this?
+    PKT_ID_LEN = len(uuid.uuid4().hex) # 32
+    RTT_START_IDX = PKT_ID_START_IDX + PKT_ID_LEN + 1
+    RTT_LEN = len("%17.6lf" % time.time()) # 17; Will this ever change?
+
+    # Updates rtt in System Name TLV
+    # Input: Serialized packet as a string
+    # Returns a tuple: (updated serialized packet, ctrl <=> switch RTT)
+    @staticmethod
+    def update_rtt(eth_str, rtt):
+        if rtt == 0:
+            return (eth_str, rtt)
+
+        # If rtt length changes, change the class' consts above
+        rttString = "%17.6lf" % rtt
+
+        # Really terrible to be doing this in Python... Slice string and re-create packet
+        pktBeginning = eth_str[:LLDPPacket.RTT_START_IDX]
+        pktEnding = eth_str[LLDPPacket.RTT_START_IDX + LLDPPacket.RTT_LEN:]
+
+        new_eth_str = pktBeginning + rttString + pktEnding
+
+        return (new_eth_str, rttString)
+
+    # Updates packet's ID in System Name TLV
+    # Input: Serialized packet as a string
+    # Returns a tuple: (updated serialized packet, the packet ID)
+    @staticmethod
+    def update_packet_id(eth_str):
+        # If UUID length changes, change the class' consts above
+        packetID = uuid.uuid4().hex
+
+        # Really terrible to be doing this in Python... Slice string and re-create packet
+        pktBeginning = eth_str[:LLDPPacket.PKT_ID_START_IDX]
+        pktEnding = eth_str[LLDPPacket.PKT_ID_START_IDX + LLDPPacket.PKT_ID_LEN:]
+
+        new_eth_str = pktBeginning + packetID + pktEnding
+
+        return (new_eth_str, packetID)
+
     @staticmethod
     def lldp_packet(dpid, port_no, dl_addr, ttl):
         tlv_chassis_id = ChassisID(subtype=ChassisID.SUB_LOCALLY_ASSIGNED,
@@ -167,9 +212,17 @@ class LLDPPacket(object):
                                                  port_no))
 
         tlv_ttl = TTL(ttl=ttl)
+
+        # System name format: <sys name prefix>;<16-Byte Pkt ID>;<ctrl2switch RTT>
+        # Fill system_name w/ dummy values for proper packet creation, will be replaced later
+        tlv_name = SystemName()
+        tlv_name.system_name = "%s;%s;%s" % (LLDPPacket.SYSTEM_NAME_PREFIX,\
+                                                '0' * LLDPPacket.PKT_ID_LEN,\
+                                                '0' * LLDPPacket.RTT_LEN)
+
         tlv_end = End()
 
-        tlvs = (tlv_chassis_id, tlv_port_id, tlv_ttl, tlv_end)
+        tlvs = (tlv_chassis_id, tlv_port_id, tlv_ttl, tlv_name, tlv_end)
         lldp_data = LLDP(tlvs=tlvs)
 
         eth = Ethernet(dst=lldp.LLDP_MAC_NEAREST_BRIDGE, src=dl_addr,
@@ -215,7 +268,17 @@ class LLDPPacket(object):
                 msg='unknown port id %d' % port_id)
         (src_port_no, ) = struct.unpack(LLDPPacket.PORT_ID_STR, port_id)
 
-        return src_dpid, src_port_no
+        sys_name_tlv = lldp_data.tlvs[3]
+        if sys_name_tlv.system_name.find(LLDPPacket.SYSTEM_NAME_PREFIX) != 0:
+            print "WARNING: Received LLDP w/ sys name: %s" % sys_name_tlv.system_name
+            packetID = None
+            rtt = None
+        else:
+            name_segments = sys_name_tlv.system_name.split(';')
+            packetID = name_segments[1]
+            rtt = name_segments[2] # Ctrl <=> switch RTT
+
+        return src_dpid, src_port_no, packetID, rtt
 
 
 class Discovery(app_manager.RyuApp):
@@ -236,7 +299,11 @@ class Discovery(app_manager.RyuApp):
 
     LLDP_PACKET_LEN = len(LLDPPacket.lldp_packet(0, 0, mac.DONTCARE, 0))
 
-    RTT_SAMPLE_WINDOW = 60
+    OF_CONN_PROBE_PERIOD = 2 # Period to probe for switch <=> ctrl RTTs
+
+    RTT_SAMPLE_WINDOW = 5
+
+    LINK_DELAY_SAMPLE_WINDOW = 10
 
     def __init__(self, *args, **kwargs):
         super(Discovery, self).__init__(*args, **kwargs)
@@ -251,8 +318,12 @@ class Discovery(app_manager.RyuApp):
 
         self.port_set = PortSet()
 
-        self.dp2rttSamples = {} # DPID to deque containing ctrl <=> switch RTTs
-        self.dp2avgRTT = {} # DPID to avg ctrl <=> switch RTT
+        self.dp2RTTSamples = {} # DPID to deque containing ctrl <=> switch RTTs (ms)
+        self.dp2avgRTT = {} # DPID to avg ctrl <=> switch RTT (ms)
+
+        self.packetIDs = {} # Outstanding packet IDs <=> timestamp of when they were sent
+
+        self.linkDelaySamples = {} # Map (dpid, port) tuples to deque of delays (ms)
 
         self.lldp_event = gevent.event.Event()
         self.link_event = gevent.event.Event()
@@ -261,40 +332,23 @@ class Discovery(app_manager.RyuApp):
         self.threads.append(gevent.spawn_later(0, self.lldp_loop))
         self.threads.append(gevent.spawn_later(0, self.link_loop))
         self.threads.append(gevent.spawn_later(0, self.ext_ports_loop))
-        self.threads.append(gevent.spawn_later(0, self.of_conn_rtt_loop))
+        self.threads.append(gevent.spawn_later(0, self.lldp_table_lookup_loop))
 
-    # Periodically send OFP Echo Requests to the switches
-    def of_conn_rtt_loop(self):
+    # Periodically send PacketOut w/ OFPP_TABLE to measure table lookup time + OF connection RTT
+    def lldp_table_lookup_loop(self):
+        time.sleep(0.5) # Stagger from echo req-replies
         while True:
             dp_list = self.dpset.dps.values() # Datapath objects
             for dp in dp_list:
-                echo_req = dp.ofproto_parser.OFPEchoRequest(dp)
-                echo_req.data = "%lf" % time.time() # Regular str() function rounds
-                dp.send_msg(echo_req)
+                actions = [dp.ofproto_parser.OFPActionOutput(dp.ofproto.OFPP_TABLE)]
+                lldp_packet = LLDPPacket.lldp_packet(dp.id, dp.ofproto.OFPP_MAX,
+                                                     mac.DONTCARE, self.DEFAULT_TTL)
+                lldp_packet, pktId = LLDPPacket.update_packet_id(lldp_packet)
+                self.packetIDs[pktId] = time.time()
+                dp.send_packet_out(actions=actions, data=lldp_packet)
                 gevent.sleep(self.LLDP_SEND_GUARD)  # don't burst
 
-            time.sleep(1)
-
-    @handler.set_ev_cls(ofp_event.EventOFPEchoReply,
-        [handler.HANDSHAKE_DISPATCHER, handler.CONFIG_DISPATCHER, handler.MAIN_DISPATCHER])
-    def echo_reply_handler(self, ev):
-        msg = ev.msg
-        datapath = msg.datapath
-
-        rtt = (time.time() - float(msg.data)) * 1000 # RTT in ms
-        rtt_samples = self.dp2rttSamples.setdefault(datapath.id, deque())
-        avg_rtt = self.dp2avgRTT.get(datapath.id, 0)
-
-        rtt_samples.append(rtt)
-        if len(rtt_samples) >= self.RTT_SAMPLE_WINDOW:
-            # Simple moving avg
-            self.dp2avgRTT[datapath.id] = avg_rtt + \
-                ((rtt - rtt_samples.popleft()) / self.RTT_SAMPLE_WINDOW)
-        else:
-            self.dp2avgRTT[datapath.id] = sum(rtt_samples) / len(rtt_samples)
-
-        #LOG.debug("echo to dpid %s avg RTT is %lf ms" % (datapath.id, self.dp2avgRTT[datapath.id]))
-
+            time.sleep(self.OF_CONN_PROBE_PERIOD) # Monkey-patched by gevent
 
     # Keeps data structure of external ports up to date
     # Do this within loop rather than triggering on OF port status updates
@@ -409,10 +463,32 @@ class Discovery(app_manager.RyuApp):
 
     @handler.set_ev_cls(ofp_event.EventOFPPacketIn, handler.MAIN_DISPATCHER)
     def packet_in_handler(self, ev):
+        print "\n"
+        now = time.time()
         msg = ev.msg
+        dp = msg.datapath
         # LOG.debug('packet in ev %s msg %s', ev, ev.msg)
         try:
-            src_dpid, src_port_no = LLDPPacket.lldp_parse(msg.data)
+            src_dpid, src_port_no, packetID, remote_rtt = LLDPPacket.lldp_parse(msg.data)
+
+            # If in_port is OFPP_MAX, then this was sent from this controller
+            # for measuring the connection + table lookup RTT
+            if (src_port_no == msg.datapath.ofproto.OFPP_MAX):
+                rtt = (now - self.packetIDs.pop(packetID)) * 1000 # RTT in ms
+
+                rtt_samples = self.dp2RTTSamples.setdefault(dp.id, deque(maxlen=self.RTT_SAMPLE_WINDOW))
+                avg_rtt = self.dp2avgRTT.get(dp.id, 0)
+                rtt_samples.append(rtt)
+                if len(rtt_samples) >= self.RTT_SAMPLE_WINDOW:
+                    # Simple moving avg
+                    self.dp2avgRTT[dp.id] = avg_rtt + \
+                    ((rtt - rtt_samples.popleft()) / self.RTT_SAMPLE_WINDOW)
+                else:
+                    self.dp2avgRTT[dp.id] = sum(rtt_samples) / len(rtt_samples)
+
+                #print "echo to dpid %s avg RTT is %lf ms" % (dp.id, self.dp2avgRTT[dp.id])
+                self._drop_packet(msg)
+                return;
         except dpkt.UnpackError as e:
             LOG.debug('error in unpack packet %s', e)
         except LLDPPacket.NotLLDP as e:
@@ -420,10 +496,10 @@ class Discovery(app_manager.RyuApp):
             # not-LLDP packet. Ignore it silently
 
             # But first, record info about the ingress ports of MACs
-            if msg.in_port in self.ext_ports.get(msg.datapath.id, []):
+            if msg.in_port in self.ext_ports.get(dp.id, []):
                 dst, src = struct.unpack_from('!6s6s', buffer(msg.data), 0)
 
-                self.mac2ext_port.dpid_add(msg.datapath.id)
+                self.mac2ext_port.dpid_add(dp.id)
 
                 # Find if MAC currently exists, if so, delete it
                 # This case may exist if hosts migrate
@@ -433,7 +509,7 @@ class Discovery(app_manager.RyuApp):
                         self.mac2ext_port.mac_del(dpid, src)
                         break
 
-                self.mac2ext_port.port_add(msg.datapath.id, msg.in_port, src)
+                self.mac2ext_port.port_add(dp.id, msg.in_port, src)
 
             return
         except LLDPPacket.LLDPUnknownFormat as e:
@@ -443,7 +519,7 @@ class Discovery(app_manager.RyuApp):
             return
         else:
             if not self.link_set.update_link(src_dpid, src_port_no,
-                                             msg.datapath.id, msg.in_port):
+                                             dp.id, msg.in_port):
                 # reverse link is not detected yet.
                 # So schedule the check early because it's very likely it's up
                 try:
@@ -454,10 +530,59 @@ class Discovery(app_manager.RyuApp):
                     # port add event. In that case key error can happend.
                     LOG.debug('KeyError')
                 else:
-                    self.port_set.move_front(msg.datapath, msg.in_port)
+                    if src_dpid in self.dpset.dps.keys():
+                        # move_front() will clear port_data's timestamp, which will
+                        # schedule a new LLDP ASAP. Only do this if source DPID
+                        # is also controlled by this controller, else it will spam LLDPs.
+                        self.port_set.move_front(msg.datapath, msg.in_port)
                     self.lldp_event.set()
-            if self.explicit_drop:
-                self._drop_packet(msg)
+
+            if src_dpid == dp.id and src_port_no == msg.in_port and packetID and remote_rtt:
+                # This is a bounced reply packet from remote end
+                # Check packet ID to see if this controller sent it
+                try:
+                    sent_time = self.packetIDs.pop(packetID, 0)
+                    elapsed = (now - sent_time) * 1000
+                    print "pong packet! elapsed: %.6lf ms" % elapsed
+                    link_delay = (elapsed - float(remote_rtt) - self.dp2avgRTT.get(dp.id, 0)) / 2
+                    if link_delay < 0:
+                        # Sometimes link delay is negative... set it to 0?
+                        link_delay = 0
+
+                    delaySamples = self.linkDelaySamples.setdefault((dp.id, msg.in_port),
+                                                    deque(maxlen=self.LINK_DELAY_SAMPLE_WINDOW))
+                    #delaySamples.append(link_delay)
+                    #avgDelay = sum(delaySamples) / len(delaySamples)
+
+                    # SRTT version
+                    if len(delaySamples) == 0:
+                        delaySamples.append(0)
+                    avgDelay = delaySamples[-1] + 0.125 * (link_delay - delaySamples[-1])
+                    delaySamples.append(avgDelay)
+                    # END SRTT version
+                    print "avg link rtt: %.6lf ms ; one-way delay: %.6lf ms" % (avgDelay * 2, avgDelay)
+
+                except Exception as e:
+                    # Only seen if switch changed controllers between time LLDP sent and bounced back
+                    print "Not from this controller! Packet ID was: %s" % packetID# Right now shouldn't see this...
+                    print "ERROR is.. %s" % e
+                else:
+                    print "Packet ID verified from this controller! This RTT: %.6lf & Remote RTT: %s" % (self.dp2avgRTT.get(dp.id, 0), remote_rtt)
+                    pass
+
+            elif packetID is not None and remote_rtt is not None:
+                # Fill packet with this controller's switch RTT and send it back
+                actions = [dp.ofproto_parser.OFPActionOutput(msg.in_port)]
+                lldp_packet, _ = LLDPPacket.update_rtt(msg.data, self.dp2avgRTT.get(dp.id, 0))
+                dp.send_packet_out(actions=actions, data=lldp_packet)
+
+            else:
+                # If packetID or remote_rtt are None, may have received LLDP from system
+                # that doesn't support our protocol. Ignore silently for now.
+                pass
+
+        if self.explicit_drop:
+            self._drop_packet(msg)
 
     def send_lldp_packet(self, dp, port_no):
         try:
@@ -469,7 +594,9 @@ class Discovery(app_manager.RyuApp):
         if port_data.is_down:
             return
         actions = [dp.ofproto_parser.OFPActionOutput(port_no)]
-        dp.send_packet_out(actions=actions, data=port_data.data)
+        lldp_packet, pktId = LLDPPacket.update_packet_id(port_data.data)
+        self.packetIDs[pktId] = time.time()
+        dp.send_packet_out(actions=actions, data=lldp_packet)
         # LOG.debug('lldp sent %s %d', dpid_to_str(dp.id), port_no)
 
     def lldp_loop(self):
