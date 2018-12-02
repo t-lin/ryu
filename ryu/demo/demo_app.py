@@ -20,9 +20,10 @@ class DemoApp(object):
         self.mac2port = appObjs['mac2port'] # Dictionary of dictionaries
 
     def _drop_packet(self, msg):
-        LOG.info("Dropping packet")
-        datapath = msg.datapath
-        datapath.send_packet_out(msg.buffer_id, msg.in_port, [])
+        if msg.buffer_id != 0xffffffff:
+            LOG.info("Dropping packet")
+            datapath = msg.datapath
+            datapath.send_packet_out(msg.buffer_id, msg.in_port, [])
 
     def handle_packet_in(self, ev):
         msg = ev.msg
@@ -74,7 +75,11 @@ class DemoApp(object):
             priority=ofproto.OFP_DEFAULT_PRIORITY,
             flags=ofproto.OFPFF_SEND_FLOW_REM, actions=actions)
 
-        datapath.send_packet_out(msg.buffer_id, msg.in_port, actions)
+        if msg.buffer_id == 0xffffffff:
+            # Switch didn't buffer packet, whole packet was sent to controller
+            datapath.send_packet_out(msg.buffer_id, msg.in_port, actions, data = msg.data)
+        else:
+            datapath.send_packet_out(msg.buffer_id, msg.in_port, actions)
 
 
 

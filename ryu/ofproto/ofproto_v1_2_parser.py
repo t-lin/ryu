@@ -318,8 +318,9 @@ class OFPPacketOut(MsgBase):
             offset += a.len
             self.actions_len += a.len
 
-        if self.data is not None:
-            assert self.buffer_id == 0xffffffff
+        # Data is only meaningful if buffer_id == -1
+        if self.buffer_id == 0xffffffff:
+            assert self.data is not None
             self.buf += self.data
 
         msg_pack_into(ofproto_v1_2.OFP_PACKET_OUT_PACK_STR,

@@ -49,8 +49,9 @@ class SimpleSwitch(app_manager.RyuApp):
         self._last_demo_change = 0
 
     def _drop_packet(self, msg):
-        datapath = msg.datapath
-        datapath.send_packet_out(msg.buffer_id, msg.in_port, [])
+        if msg.buffer_id != 0xffffffff:
+            datapath = msg.datapath
+            datapath.send_packet_out(msg.buffer_id, msg.in_port, [])
 
     def _is_demo_app_changed(self):
         stat = os.stat(demo_app.__file__)
@@ -87,11 +88,11 @@ class SimpleSwitch(app_manager.RyuApp):
 
         self.mac2port.port_add(dpid, msg.in_port, src)
 	broadcast = (dst == mac.BROADCAST) or mac.is_multicast(dst)
-	
+
         if broadcast:
 		out_port = ofproto.OFPP_FLOOD
          	LOG.info("broadcast frame, flood and install flow")
-	else:		
+	else:
 		if src != dst:
 			out_port = self.mac2port.port_get(dpid, dst)
 	        	if out_port == None:
@@ -124,13 +125,13 @@ class SimpleSwitch(app_manager.RyuApp):
         ofproto = msg.datapath.ofproto
 
         if reason == ofproto.OFPPR_ADD:
-		port_no = msg.desc.port_no 
+		port_no = msg.desc.port_no
         	LOG.info("port added %s", port_no)
         elif reason == ofproto.OFPPR_DELETE:
-		port_no = msg.desc.port_no 
+		port_no = msg.desc.port_no
         	LOG.info("port deleted %s", port_no)
         else:
-		port_no = msg.desc.port_no 
+		port_no = msg.desc.port_no
         	LOG.info("port modified %s", port_no)
 
     @set_ev_cls(ofp_event.EventOFPBarrierReply, MAIN_DISPATCHER)
