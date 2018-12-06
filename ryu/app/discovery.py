@@ -47,6 +47,8 @@ from ryu.lib.lldp import (ChassisID,
                           SystemName)
 from ryu.ofproto import nx_match
 
+import OFSniff # Lib for sniffing OF connection to calculate RTTs
+
 
 LOG = logging.getLogger(__name__)
 
@@ -334,6 +336,10 @@ class Discovery(app_manager.RyuApp):
         self.threads.append(gevent.spawn_later(0, self.ext_ports_loop))
         self.threads.append(gevent.spawn_later(0, self.lldp_table_lookup_loop))
 
+        # OFSniff: startSniffLoop() will start a separate thread, not hindered by GIL
+        self.dpid2endpoint = {} # Maps DPID to numerical endpoint (ip/port)
+        assert OFSniff.startSniffLoop("any", FLAGS.ofp_tcp_listen_port) == True
+
     # Periodically send PacketOut w/ OFPP_TABLE to measure table lookup time + OF connection RTT
     def lldp_table_lookup_loop(self):
         time.sleep(0.5) # Stagger from echo req-replies
@@ -388,7 +394,16 @@ class Discovery(app_manager.RyuApp):
     def dp_handler(self, ev):
         LOG.debug('dp_handler %s %s', ev, ev.enter_leave)
         dp = ev.dp
-        if ev.enter_leave:
+        if ev.enter_leave: # New switch connected
+            ip = dp.address[0].split('.')
+            ip.reverse() # Turn to network byte-order
+            endpoint = 0
+            for octet in ip:
+                endpoint = (endpoint << 8) | int(octet)
+
+            endpoint = (endpoint << 16) | dp.address[1]
+            self.dpid2endpoint[dp.id] = endpoint
+
             if self.install_flow:
                 rule = nx_match.ClsRule()
                 rule.set_dl_dst(lldp.LLDP_MAC_NEAREST_BRIDGE)
@@ -473,20 +488,13 @@ class Discovery(app_manager.RyuApp):
 
             # If in_port is OFPP_MAX, then this was sent from this controller
             # for measuring the connection + table lookup RTT
-            if (src_port_no == msg.datapath.ofproto.OFPP_MAX):
-                rtt = (now - self.packetIDs.pop(packetID)) * 1000 # RTT in ms
+            if (src_port_no == dp.ofproto.OFPP_MAX):
+                # OFSniff implementation
+                self.packetIDs.pop(packetID)
+                self.dp2avgRTT[dp.id] = OFSniff.getDp2CtrlRTT(self.dpid2endpoint[dp.id])
+                # END OFSniff implementation
 
-                rtt_samples = self.dp2RTTSamples.setdefault(dp.id, deque(maxlen=self.RTT_SAMPLE_WINDOW))
-                avg_rtt = self.dp2avgRTT.get(dp.id, 0)
-                rtt_samples.append(rtt)
-                if len(rtt_samples) >= self.RTT_SAMPLE_WINDOW:
-                    # Simple moving avg
-                    self.dp2avgRTT[dp.id] = avg_rtt + \
-                    ((rtt - rtt_samples.popleft()) / self.RTT_SAMPLE_WINDOW)
-                else:
-                    self.dp2avgRTT[dp.id] = sum(rtt_samples) / len(rtt_samples)
-
-                #print "echo to dpid %s avg RTT is %lf ms" % (dp.id, self.dp2avgRTT[dp.id])
+                print "echo to dpid %s avg RTT is %lf ms" % (dp.id, self.dp2avgRTT[dp.id])
                 self._drop_packet(msg)
                 return;
         except dpkt.UnpackError as e:
@@ -542,25 +550,8 @@ class Discovery(app_manager.RyuApp):
                 # Check packet ID to see if this controller sent it
                 try:
                     sent_time = self.packetIDs.pop(packetID, 0)
-                    elapsed = (now - sent_time) * 1000
-                    print "pong packet! elapsed: %.6lf ms" % elapsed
-                    link_delay = (elapsed - float(remote_rtt) - self.dp2avgRTT.get(dp.id, 0)) / 2
-                    if link_delay < 0:
-                        # Sometimes link delay is negative... set it to 0?
-                        link_delay = 0
-
-                    delaySamples = self.linkDelaySamples.setdefault((dp.id, msg.in_port),
-                                                    deque(maxlen=self.LINK_DELAY_SAMPLE_WINDOW))
-                    #delaySamples.append(link_delay)
-                    #avgDelay = sum(delaySamples) / len(delaySamples)
-
-                    # SRTT version
-                    if len(delaySamples) == 0:
-                        delaySamples.append(0)
-                    avgDelay = delaySamples[-1] + 0.125 * (link_delay - delaySamples[-1])
-                    delaySamples.append(avgDelay)
-                    # END SRTT version
-                    print "avg link rtt: %.6lf ms ; one-way delay: %.6lf ms" % (avgDelay * 2, avgDelay)
+                    avgDelay = OFSniff.getLinkLatAvg(self.dpid2endpoint[dp.id], src_port_no)
+                    print "avg link rtt: %.6lf ms ; one-way delay: %.6lf ms" % (avgDelay, avgDelay / 2)
 
                 except Exception as e:
                     # Only seen if switch changed controllers between time LLDP sent and bounced back
