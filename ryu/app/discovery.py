@@ -303,9 +303,7 @@ class Discovery(app_manager.RyuApp):
 
     OF_CONN_PROBE_PERIOD = 2 # Period to probe for switch <=> ctrl RTTs
 
-    RTT_SAMPLE_WINDOW = 5
-
-    LINK_DELAY_SAMPLE_WINDOW = 10
+    PACKET_ID_EXPIRY_TIME = 60 # Max lifetime of outstanding packet IDs
 
     def __init__(self, *args, **kwargs):
         super(Discovery, self).__init__(*args, **kwargs)
@@ -335,10 +333,24 @@ class Discovery(app_manager.RyuApp):
         self.threads.append(gevent.spawn_later(0, self.link_loop))
         self.threads.append(gevent.spawn_later(0, self.ext_ports_loop))
         self.threads.append(gevent.spawn_later(0, self.lldp_table_lookup_loop))
+        self.threads.append(gevent.spawn_later(0, self.pkt_id_cleanup_loop))
 
         # OFSniff: startSniffLoop() will start a separate thread, not hindered by GIL
         self.dpid2endpoint = {} # Maps DPID to numerical endpoint (ip/port)
         assert OFSniff.startSniffLoop("any", FLAGS.ofp_tcp_listen_port) == True
+
+    # Periodically clean-up the packetIDs structure
+    # This prevents the structure from building up and consuming memory due to
+    # packets sent out to host ports or ports connected to external networks
+    def pkt_id_cleanup_loop(self):
+        while True:
+            now = time.time()
+            for pktId, timestamp in self.packetIDs.items():
+                expiry_time = timestamp + self.PACKET_ID_EXPIRY_TIME
+                if expiry_time < now:
+                    self.packetIDs.pop(pktId)
+
+            time.sleep(10) # Not time-critical, sleep 10 seconds
 
     # Periodically send PacketOut w/ OFPP_TABLE to measure table lookup time + OF connection RTT
     def lldp_table_lookup_loop(self):
@@ -372,11 +384,9 @@ class Discovery(app_manager.RyuApp):
                 #print "DPID: %s" % dp.id
 
                 for port in port_list:
-                    #status = "Down" if self.port_set.get_port(dp, port).is_down else "Up"
-                    #print "\tPort %s, status = %s, connected to host %s" % (port, status, host_port)
-                    host_port = True if not self.link_set.port_exists(dp.id, port) else False
+                    is_ext_port = True if not self.link_set.port_exists(dp.id, port) else False
 
-                    if host_port:
+                    if is_ext_port:
                         ext_port_list.append(port)
 
                 self.ext_ports[dp.id] = ext_port_list
@@ -531,7 +541,7 @@ class Discovery(app_manager.RyuApp):
                 # reverse link is not detected yet.
                 # So schedule the check early because it's very likely it's up
                 try:
-                    self.port_set.lldp_received(msg.datapath, msg.in_port)
+                    self.port_set.lldp_received(dp, msg.in_port)
                 except KeyError:
                     # There are races between EventOFPPacketIn and
                     # EventDPPortAdd. So packet-in event can happend before
@@ -542,7 +552,7 @@ class Discovery(app_manager.RyuApp):
                         # move_front() will clear port_data's timestamp, which will
                         # schedule a new LLDP ASAP. Only do this if source DPID
                         # is also controlled by this controller, else it will spam LLDPs.
-                        self.port_set.move_front(msg.datapath, msg.in_port)
+                        self.port_set.move_front(dp, msg.in_port)
                     self.lldp_event.set()
 
             if src_dpid == dp.id and src_port_no == msg.in_port and packetID and remote_rtt:
