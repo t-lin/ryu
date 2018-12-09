@@ -55,12 +55,17 @@ LOG = logging.getLogger('ryu.app.rest_savi')
 # get ingress port of a MAC address
 # GET /topology/mac/<mac>
 #
+# get latency estimate of a port
+# GET /topology/stats/<dpid>_<port>
+#
 class DiscoveryController(ControllerBase):
     def __init__(self, req, link, data, **config):
         super(DiscoveryController, self).__init__(req, link, data, **config)
         self.dpset = data['dpset']
         self.link_set = data['link_set']
         self.mac2ext_port = data['mac2ext_port']
+        self.ofsniff = data['ofsniff']
+        self.dpid2endpoint = data['dpid2endpoint']
 
     @staticmethod
     def _format_link(link, timestamp, now):
@@ -117,6 +122,27 @@ class DiscoveryController(ControllerBase):
         body = json.dumps(body)
         return Response(content_type='application/json', body=body)
 
+    def get_port_stats(self, req, dpid, port):
+        if self.ofsniff.isSniffing():
+            dpid = int(dpid, 16)
+            port = int(port)
+
+            if dpid not in self.dpid2endpoint.keys():
+                body = 'dpid %s is not found\n' % dpid
+                return Response(status=httplib.NOT_FOUND, body=body)
+
+            endpoint = self.dpid2endpoint[dpid]
+            body = {'avg': self.ofsniff.getLinkLatAvg(endpoint, port),
+                    'var': self.ofsniff.getLinkLatVar(endpoint, port),
+                    'med': self.ofsniff.getLinkLatMed(endpoint, port)}
+
+            body = json.dumps(body) + '\n'
+        else:
+            body = "Sniff Loop not started\n"
+            return Response(status=httplib.INTERNAL_SERVER_ERROR, body=body)
+
+        return Response(content_type='application/json', body=body)
+
 class RestDiscoveryApi(app_manager.RyuApp):
     _CONTEXTS = {
         'link_set': link_set.LinkSet,
@@ -136,6 +162,11 @@ class RestDiscoveryApi(app_manager.RyuApp):
         self.data['link_set'] = self.link_set
         self.data['waiters'] = self.waiters
         self.data['mac2ext_port'] = kwargs['mac2ext_port']
+
+        # OFSniff class and metadata handles (defined in discovery.py)
+        # If this app runs, it's expected that discovery.py is also running
+        self.data['ofsniff'] = kwargs['ofsniff']
+        self.data['dpid2endpoint'] = kwargs['dpid2endpoint']
 
         mapper = wsgi.mapper
 
@@ -157,4 +188,9 @@ class RestDiscoveryApi(app_manager.RyuApp):
 
         mapper.connect('topology', path + '/mac/{mac}',
                        controller=DiscoveryController, action='get_ingress_port',
+                       conditions=dict(method=['GET']))
+
+        uri = path + '/stats/{dpid}_{port}'
+        mapper.connect('topology', uri,
+                       controller=DiscoveryController, action='get_port_stats',
                        conditions=dict(method=['GET']))

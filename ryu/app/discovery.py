@@ -288,6 +288,8 @@ class Discovery(app_manager.RyuApp):
                  'link_set': LinkSet,
                  'ext_ports': dict,
                  'mac2ext_port': mac_to_port.MacToPortTable,
+                 'ofsniff': OFSniff.OFSniff,
+                 'dpid2endpoint': dict,
                  }
 
     # TODO:XXX what's appropriate parameter? adaptive?
@@ -336,14 +338,15 @@ class Discovery(app_manager.RyuApp):
         self.threads.append(gevent.spawn_later(0, self.pkt_id_cleanup_loop))
 
         # OFSniff: startSniffLoop() will start a separate thread, not hindered by GIL
-        self.dpid2endpoint = {} # Maps DPID to numerical endpoint (ip/port)
-        assert OFSniff.startSniffLoop("any", FLAGS.ofp_tcp_listen_port) == True
+        self.ofsniff = kwargs['ofsniff']
+        self.dpid2endpoint = kwargs['dpid2endpoint'] # Maps DPID to numerical endpoint (ip/port)
+        assert self.ofsniff.startSniffLoop("any", FLAGS.ofp_tcp_listen_port) == True
 
     # Periodically clean-up the packetIDs structure
     # This prevents the structure from building up and consuming memory due to
     # packets sent out to host ports or ports connected to external networks
     def pkt_id_cleanup_loop(self):
-        while True:
+        while self.is_active:
             now = time.time()
             for pktId, timestamp in self.packetIDs.items():
                 expiry_time = timestamp + self.PACKET_ID_EXPIRY_TIME
@@ -355,7 +358,7 @@ class Discovery(app_manager.RyuApp):
     # Periodically send PacketOut w/ OFPP_TABLE to measure table lookup time + OF connection RTT
     def lldp_table_lookup_loop(self):
         time.sleep(0.5) # Stagger from echo req-replies
-        while True:
+        while self.is_active:
             dp_list = self.dpset.dps.values() # Datapath objects
             for dp in dp_list:
                 actions = [dp.ofproto_parser.OFPActionOutput(dp.ofproto.OFPP_TABLE)]
@@ -376,7 +379,7 @@ class Discovery(app_manager.RyuApp):
     # within the topology. These may be connected to hosts or networks
     # not controlled by this controller
     def ext_ports_loop(self):
-        while True:
+        while self.is_active:
             dp_list = self.dpset.dps.values() # Datapath objects
             for dp in dp_list:
                 ext_port_list = []
@@ -501,7 +504,7 @@ class Discovery(app_manager.RyuApp):
             if (src_port_no == dp.ofproto.OFPP_MAX):
                 # OFSniff implementation
                 self.packetIDs.pop(packetID)
-                self.dp2avgRTT[dp.id] = OFSniff.getDp2CtrlRTT(self.dpid2endpoint[dp.id])
+                self.dp2avgRTT[dp.id] = self.ofsniff.getDp2CtrlRTT(self.dpid2endpoint[dp.id])
                 # END OFSniff implementation
 
                 print "echo to dpid %s avg RTT is %lf ms" % (dp.id, self.dp2avgRTT[dp.id])
@@ -560,7 +563,7 @@ class Discovery(app_manager.RyuApp):
                 # Check packet ID to see if this controller sent it
                 try:
                     sent_time = self.packetIDs.pop(packetID, 0)
-                    avgDelay = OFSniff.getLinkLatAvg(self.dpid2endpoint[dp.id], src_port_no)
+                    avgDelay = self.ofsniff.getLinkLatAvg(self.dpid2endpoint[dp.id], src_port_no)
                     print "avg link rtt: %.6lf ms ; one-way delay: %.6lf ms" % (avgDelay, avgDelay / 2)
 
                 except Exception as e:
