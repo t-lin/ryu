@@ -286,10 +286,12 @@ class LLDPPacket(object):
 class Discovery(app_manager.RyuApp):
     _CONTEXTS = {'dpset': dpset.DPSet,
                  'link_set': LinkSet,
+                 'port_set': PortSet,
                  'ext_ports': dict,
                  'mac2ext_port': mac_to_port.MacToPortTable,
                  'ofsniff': OFSniff.OFSniff,
                  'dpid2endpoint': dict,
+                 'ext_switch_ports': dict
                  }
 
     # TODO:XXX what's appropriate parameter? adaptive?
@@ -312,13 +314,14 @@ class Discovery(app_manager.RyuApp):
         self.dpset = kwargs['dpset']
         self.link_set = kwargs['link_set']
         self.ext_ports = kwargs['ext_ports'] # Ports not within topology
+        self.ext_switch_ports = kwargs['ext_switch_ports'] # External ports connected to another switch
         self.mac2ext_port = kwargs['mac2ext_port']
         self.install_flow = kwargs.get('install_flow',
                                        FLAGS.discovery_install_flow)
         self.explicit_drop = kwargs.get('explicit_drop',
                                         FLAGS.discovery_explicit_drop)
 
-        self.port_set = PortSet()
+        self.port_set = kwargs['port_set']
 
         self.dp2RTTSamples = {} # DPID to deque containing ctrl <=> switch RTTs (ms)
         self.dp2avgRTT = {} # DPID to avg ctrl <=> switch RTT (ms)
@@ -371,7 +374,7 @@ class Discovery(app_manager.RyuApp):
 
             time.sleep(self.OF_CONN_PROBE_PERIOD) # Monkey-patched by gevent
 
-    # Keeps data structure of external ports up to date
+    # Keeps ext_ports and ext_switch_ports up to date.
     # Do this within loop rather than triggering on OF port status updates
     # as ports may dynamically become/lose their status as external ports
     #
@@ -393,6 +396,12 @@ class Discovery(app_manager.RyuApp):
                         ext_port_list.append(port)
 
                 self.ext_ports[dp.id] = ext_port_list
+
+                # Double-check ext_switch_ports. First LLDP received at one end
+                # may mistakenly identify it as an external switch port.
+                for port in self.ext_switch_ports.get(dp.id, []):
+                    if port not in ext_port_list:
+                        self.ext_switch_ports[dp.id].remove(port)
 
             time.sleep(1)
 
@@ -551,6 +560,13 @@ class Discovery(app_manager.RyuApp):
                     # port add event. In that case key error can happend.
                     LOG.debug('KeyError')
                 else:
+                    # We've received LLDP, and there's no reverse link, thus we
+                    # add this to ext_switch_ports. At Ryu start, it may be
+                    # mistakenly identified as one even if the switch at the
+                    # end is controlled by this controller. This is checked for
+                    # and the port is removed in the ext_ports_loop().
+                    self.ext_switch_ports.setdefault(dp.id, []).append(msg.in_port)
+
                     if src_dpid in self.dpset.dps.keys():
                         # move_front() will clear port_data's timestamp, which will
                         # schedule a new LLDP ASAP. Only do this if source DPID

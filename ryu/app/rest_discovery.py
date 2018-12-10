@@ -31,6 +31,10 @@ from ryu.lib import dpid as lib_dpid
 from ryu.lib.mac import haddr_to_str, haddr_to_bin
 from ryu.app.wsgi import ControllerBase, WSGIApplication
 
+from prometheus_client import Gauge
+from prometheus_client.core import REGISTRY
+from prometheus_client.exposition import generate_latest
+
 
 LOG = logging.getLogger('ryu.app.rest_savi')
 
@@ -55,17 +59,29 @@ LOG = logging.getLogger('ryu.app.rest_savi')
 # get ingress port of a MAC address
 # GET /topology/mac/<mac>
 #
-# get latency estimate of a port
+# get latency estimate stats of a port
 # GET /topology/stats/<dpid>_<port>
+#
+# get latency estimate stats of a port in Prometheus format
+# GET /metrics
 #
 class DiscoveryController(ControllerBase):
     def __init__(self, req, link, data, **config):
         super(DiscoveryController, self).__init__(req, link, data, **config)
         self.dpset = data['dpset']
+        self.port_set = data['port_set']
         self.link_set = data['link_set']
         self.mac2ext_port = data['mac2ext_port']
+        self.ext_switch_ports = data['ext_switch_ports']
+
+        # OFSniff metadata
         self.ofsniff = data['ofsniff']
         self.dpid2endpoint = data['dpid2endpoint']
+
+        # Prometheus metrics
+        self.promGaugeAvg = data['prom_gauge_avg']
+        self.promGaugeVar = data['prom_gauge_var']
+        self.promGaugeMed = data['prom_gauge_med']
 
     @staticmethod
     def _format_link(link, timestamp, now):
@@ -143,6 +159,30 @@ class DiscoveryController(ControllerBase):
 
         return Response(content_type='application/json', body=body)
 
+    def get_prom_metrics(self, req):
+        if self.ofsniff.isSniffing():
+            for dpid, dp in self.dpset.dps.items():
+                endpoint = self.dpid2endpoint[dpid]
+                for port in self.port_set.get_dp_port(dp):
+                    # Ensure port isn't a host port
+                    if self.link_set.port_exists(dpid, port) or \
+                            port in self.ext_switch_ports.get(dpid, []):
+                        self.promGaugeAvg.labels(dpid_to_str(dpid), port).\
+                                set(self.ofsniff.getLinkLatAvg(endpoint, port))
+                        self.promGaugeVar.labels(dpid_to_str(dpid), port).\
+                                set(self.ofsniff.getLinkLatVar(endpoint, port))
+                        self.promGaugeMed.labels(dpid_to_str(dpid), port).\
+                                set(self.ofsniff.getLinkLatMed(endpoint, port))
+                    else:
+                        # Port is connected to a host port, silently ignore
+                        pass
+        else:
+            body = "Sniff Loop not started\n"
+            return Response(status=httplib.INTERNAL_SERVER_ERROR, body=body)
+
+        body = generate_latest(REGISTRY)
+        return Response(content_type='application/json', body=body)
+
 class RestDiscoveryApi(app_manager.RyuApp):
     _CONTEXTS = {
         'link_set': link_set.LinkSet,
@@ -159,14 +199,27 @@ class RestDiscoveryApi(app_manager.RyuApp):
         self.data = {}
 
         self.data['dpset'] = self.dpset
+        self.data['port_set'] = kwargs['port_set']
         self.data['link_set'] = self.link_set
         self.data['waiters'] = self.waiters
         self.data['mac2ext_port'] = kwargs['mac2ext_port']
+        self.data['ext_switch_ports'] = kwargs['ext_switch_ports']
 
         # OFSniff class and metadata handles (defined in discovery.py)
         # If this app runs, it's expected that discovery.py is also running
         self.data['ofsniff'] = kwargs['ofsniff']
         self.data['dpid2endpoint'] = kwargs['dpid2endpoint']
+
+        # Prometheus metrics
+        self.data['prom_gauge_avg'] = Gauge('latency_rtt_avg',
+                                        'Average of estimated RTTs from given (dpid, port)',
+                                        ['dpid', 'port'])
+        self.data['prom_gauge_var'] = Gauge('latency_rtt_var',
+                                        'Variance of estimated RTTs from given (dpid, port)',
+                                        ['dpid', 'port'])
+        self.data['prom_gauge_med'] = Gauge('latency_rtt_med',
+                                        'Median of estimated RTTs from given (dpid, port)',
+                                        ['dpid', 'port'])
 
         mapper = wsgi.mapper
 
@@ -194,3 +247,9 @@ class RestDiscoveryApi(app_manager.RyuApp):
         mapper.connect('topology', uri,
                        controller=DiscoveryController, action='get_port_stats',
                        conditions=dict(method=['GET']))
+
+        # Prometheus' default scrape URI
+        uri = '/metrics'
+        mapper.connect('topology', uri,
+                controller=DiscoveryController, action='get_prom_metrics',
+                conditions=dict(method=['GET']))
