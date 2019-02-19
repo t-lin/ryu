@@ -62,11 +62,11 @@ class SimpleSwitch(app_manager.RyuApp):
         return False
 
     def demo_app(self):
-        reload(demo_app)
         if not self._demo_app or self._is_demo_app_changed():
-          print "\n***\nReloading application\n***\n"
-          appObjs = {'mac2port': self.mac2port}
-          self._demo_app = demo_app.DemoApp(appObjs)
+            reload(demo_app)
+            print "\n***\nReloading application\n***\n"
+            appObjs = {'mac2port': self.mac2port}
+            self._demo_app = demo_app.DemoApp(appObjs)
 
         return self._demo_app
 
