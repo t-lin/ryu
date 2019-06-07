@@ -99,30 +99,46 @@ class DPSet(object):
 
     def register(self, dp):
         assert dp.id is not None
-        assert dp.id not in self.dps
 
         dp_type_ = self.dp_types.pop(dp.id, None)
         if dp_type_ is not None:
             dp.dp_type = dp_type_
 
+        # while dpid should be unique, we need to handle duplicates here
+        # because it's entirely possible for a switch to reconnect us
+        # before we notice the drop of the previous connection.
+        # in that case,
+        # - forget the older connection as it likely will disappear soon
+        # - do not send EventDP leave/enter events
+        # - keep the PortState for the dpid
+        if dp.id in self.dps:
+            (self.dps[dp.id]).close()
+
         self.dps[dp.id] = dp
-        self.port_state[dp.id] = PortState()
 
-        # If we dispatch the queue, it is possible for another event to cut
-        # in before us.
-        # It would cause event reordering like port del -> port add
-        # prevent such reordering
-        self.ev_q.cork()
-        self.ev_q.queue(EventDP(dp, True))
+        if dp.id not in self.port_state:
+            self.port_state[dp.id] = PortState()
 
-        # generate port_add event for convenience
-        # so that the user don't have to handle dp enter event
-        for port in dp.ports.values():
-            self._port_added(dp, port)
-        del dp.ports
-        self.ev_q.uncork()
+            # If we dispatch the queue, it is possible for another event to cut
+            # in before us.
+            # It would cause event reordering like port del -> port add
+            # prevent such reordering
+            self.ev_q.cork()
+            self.ev_q.queue(EventDP(dp, True))
+
+            # generate port_add event for convenience
+            # so that the user don't have to handle dp enter event
+            for port in dp.ports.values():
+                self._port_added(dp, port)
+            del dp.ports
+            self.ev_q.uncork()
 
     def unregister(self, dp):
+        if not dp in self.dps.values():
+            return
+
+        assert self.dps[dp.id] == dp
+
         # generate port_del event for convenience
         # so that the user don't have to handle dp leave event
         # Now datapath is already dead, so port status change event doesn't
