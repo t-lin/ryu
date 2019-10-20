@@ -297,15 +297,15 @@ class Discovery(app_manager.RyuApp):
     # TODO:XXX what's appropriate parameter? adaptive?
     # in seconds
     DEFAULT_TTL = 120   # unused. ignored.
-    LLDP_SEND_GUARD = .05
-    LLDP_SEND_PERIOD_PER_PORT = .9
+    LLDP_SEND_GUARD = 0.2
+    LLDP_SEND_PERIOD_PER_PORT = 4.9
     TIMEOUT_CHECK_PERIOD = 5.
     LINK_TIMEOUT = TIMEOUT_CHECK_PERIOD * 2
     LINK_LLDP_DROP = 5
 
     LLDP_PACKET_LEN = len(LLDPPacket.lldp_packet(0, 0, mac.DONTCARE, 0))
 
-    OF_CONN_PROBE_PERIOD = 2 # Period to probe for switch <=> ctrl RTTs
+    OF_CONN_PROBE_PERIOD = float(2) # Period to probe for switch <=> ctrl RTTs
 
     PACKET_ID_EXPIRY_TIME = 60 # Max lifetime of outstanding packet IDs
 
@@ -370,9 +370,10 @@ class Discovery(app_manager.RyuApp):
                 lldp_packet, pktId = LLDPPacket.update_packet_id(lldp_packet)
                 self.packetIDs[pktId] = time.time()
                 dp.send_packet_out(actions=actions, data=lldp_packet)
-                gevent.sleep(self.LLDP_SEND_GUARD)  # don't burst
+                gevent.sleep(self.OF_CONN_PROBE_PERIOD / len(dp_list))  # don't burst
 
-            time.sleep(self.OF_CONN_PROBE_PERIOD) # Monkey-patched by gevent
+            if not dp_list:
+                gevent.sleep(self.OF_CONN_PROBE_PERIOD) # Monkey-patched by gevent
 
     # Keeps ext_ports and ext_switch_ports up to date.
     # Do this within loop rather than triggering on OF port status updates
@@ -548,8 +549,10 @@ class Discovery(app_manager.RyuApp):
             self._drop_packet(msg)
             return
         else:
-            if not self.link_set.update_link(src_dpid, src_port_no,
-                                             dp.id, msg.in_port):
+            from_this_ctrl = src_dpid == dp.id and src_port_no == msg.in_port
+
+            if not from_this_ctrl and not self.link_set.update_link(src_dpid, src_port_no,
+                                                                     dp.id, msg.in_port):
                 # reverse link is not detected yet.
                 # So schedule the check early because it's very likely it's up
                 try:
@@ -574,7 +577,7 @@ class Discovery(app_manager.RyuApp):
                         self.port_set.move_front(dp, msg.in_port)
                     self.lldp_event.set()
 
-            if src_dpid == dp.id and src_port_no == msg.in_port and packetID and remote_rtt:
+            if from_this_ctrl and packetID and remote_rtt:
                 # This is a bounced reply packet from remote end
                 # Check packet ID to see if this controller sent it
                 try:
@@ -584,7 +587,7 @@ class Discovery(app_manager.RyuApp):
 
                 except Exception as e:
                     # Only seen if switch changed controllers between time LLDP sent and bounced back
-                    print "Not from this controller! Packet ID was: %s" % packetID# Right now shouldn't see this...
+                    print "Not from this controller! Packet ID was: %s" % packetID # Right now shouldn't see this...
                     print "ERROR is.. %s" % e
                 else:
                     print "Packet ID verified from this controller! This RTT: %.6lf & Remote RTT: %s" % (self.dp2avgRTT.get(dp.id, 0), remote_rtt)
