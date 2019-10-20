@@ -78,10 +78,7 @@ class DiscoveryController(ControllerBase):
         self.ofsniff = data['ofsniff']
         self.dpid2endpoint = data['dpid2endpoint']
 
-        # Prometheus metrics
-        self.promGaugeAvg = data['prom_gauge_avg']
-        self.promGaugeVar = data['prom_gauge_var']
-        self.promGaugeMed = data['prom_gauge_med']
+        self.data = data
 
     @staticmethod
     def _format_link(link, timestamp, now):
@@ -160,6 +157,20 @@ class DiscoveryController(ControllerBase):
         return Response(content_type='application/json', body=body)
 
     def get_prom_metrics(self, req):
+        # Prometheus metrics for link latency estimates
+        promGaugeAvg = self.data['prom_link_avg']
+        promGaugeVar = self.data['prom_link_var']
+        promGaugeMed = self.data['prom_link_med']
+
+        # OFSniff debug metrics for Prometheus
+        promEchoRTTAvg = self.data['prom_echo_avg']
+        promEchoRTTVar = self.data['prom_echo_var']
+        promEchoRTTMed = self.data['prom_echo_med']
+
+        promPktInRTTAvg = self.data['prom_pktin_avg']
+        promPktInRTTVar = self.data['prom_pktin_var']
+        promPktInRTTMed = self.data['prom_pktin_med']
+
         if self.ofsniff.isSniffing():
             for dpid, dp in self.dpset.dps.items():
                 endpoint = self.dpid2endpoint[dpid]
@@ -167,21 +178,38 @@ class DiscoveryController(ControllerBase):
                     # Ensure port isn't a host port
                     if self.link_set.port_exists(dpid, port) or \
                             port in self.ext_switch_ports.get(dpid, []):
-                        self.promGaugeAvg.labels(dpid_to_str(dpid), port).\
+                        promGaugeAvg.labels(dpid_to_str(dpid) + '-' + str(port)).\
                                 set(self.ofsniff.getLinkLatAvg(endpoint, port))
-                        self.promGaugeVar.labels(dpid_to_str(dpid), port).\
+                        promGaugeVar.labels(dpid_to_str(dpid) + '-' + str(port)).\
                                 set(self.ofsniff.getLinkLatVar(endpoint, port))
-                        self.promGaugeMed.labels(dpid_to_str(dpid), port).\
+                        promGaugeMed.labels(dpid_to_str(dpid) + '-' + str(port)).\
                                 set(self.ofsniff.getLinkLatMed(endpoint, port))
                     else:
                         # Port is connected to a host port, silently ignore
                         pass
+
+                # OFSniff debug metrics for Prometheus
+                promEchoRTTAvg.labels(dpid_to_str(dpid)).\
+                        set(self.ofsniff.getEchoRTTAvg(endpoint))
+                promEchoRTTVar.labels(dpid_to_str(dpid)).\
+                        set(self.ofsniff.getEchoRTTVar(endpoint))
+                promEchoRTTMed.labels(dpid_to_str(dpid)).\
+                        set(self.ofsniff.getEchoRTTMed(endpoint))
+
+                promPktInRTTAvg.labels(dpid_to_str(dpid)).\
+                        set(self.ofsniff.getPktInRTTAvg(endpoint))
+                promPktInRTTVar.labels(dpid_to_str(dpid)).\
+                        set(self.ofsniff.getPktInRTTVar(endpoint))
+                promPktInRTTMed.labels(dpid_to_str(dpid)).\
+                        set(self.ofsniff.getPktInRTTMed(endpoint))
+
         else:
             body = "Sniff Loop not started\n"
             return Response(status=httplib.INTERNAL_SERVER_ERROR, body=body)
 
         body = generate_latest(REGISTRY)
         return Response(content_type='application/json', body=body)
+
 
 class RestDiscoveryApi(app_manager.RyuApp):
     _CONTEXTS = {
@@ -211,15 +239,38 @@ class RestDiscoveryApi(app_manager.RyuApp):
         self.data['dpid2endpoint'] = kwargs['dpid2endpoint']
 
         # Prometheus metrics
-        self.data['prom_gauge_avg'] = Gauge('latency_rtt_avg',
-                                        'Average of estimated RTTs from given (dpid, port)',
-                                        ['dpid', 'port'])
-        self.data['prom_gauge_var'] = Gauge('latency_rtt_var',
-                                        'Variance of estimated RTTs from given (dpid, port)',
-                                        ['dpid', 'port'])
-        self.data['prom_gauge_med'] = Gauge('latency_rtt_med',
-                                        'Median of estimated RTTs from given (dpid, port)',
-                                        ['dpid', 'port'])
+        # Link RTT
+        self.data['prom_link_avg'] = Gauge('latency_rtt_avg',
+                                        'Average of estimated link RTTs from a given dpid and port',
+                                        ['dpid_port'])
+        self.data['prom_link_var'] = Gauge('latency_rtt_var',
+                                        'Variance of estimated link RTTs from a given dpid and port',
+                                        ['dpid_port'])
+        self.data['prom_link_med'] = Gauge('latency_rtt_med',
+                                        'Median of estimated link RTTs from a given dpid and port',
+                                        ['dpid_port'])
+
+        # Echo RTT (message to switch and back)
+        self.data['prom_echo_avg'] = Gauge('echo_rtt_avg',
+                                        'Average of estimated echo RTTs from a given dpid',
+                                        ['dpid'])
+        self.data['prom_echo_var'] = Gauge('echo_rtt_var',
+                                        'Variance of estimated echo RTTs from a given dpid',
+                                        ['dpid'])
+        self.data['prom_echo_med'] = Gauge('echo_rtt_med',
+                                        'Median of estimated echo RTTs from a given dpid',
+                                        ['dpid'])
+
+        # PacketIn RTT (message to controller and back)
+        self.data['prom_pktin_avg'] = Gauge('packetin_rtt_avg',
+                                        'Average of estimated PacketIn RTTs from a given dpid',
+                                        ['dpid'])
+        self.data['prom_pktin_var'] = Gauge('packetin_rtt_var',
+                                        'Variance of estimated PacketIn RTTs from a given dpid',
+                                        ['dpid'])
+        self.data['prom_pktin_med'] = Gauge('packetin_rtt_med',
+                                        'Median of estimated PacketIn RTTs from a given dpid',
+                                        ['dpid'])
 
         mapper = wsgi.mapper
 
@@ -253,3 +304,4 @@ class RestDiscoveryApi(app_manager.RyuApp):
         mapper.connect('topology', uri,
                 controller=DiscoveryController, action='get_prom_metrics',
                 conditions=dict(method=['GET']))
+
